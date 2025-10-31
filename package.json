@@ -8,8 +8,8 @@
     "dev": "nodemon server.js"
   },
   "engines": {
-    "node": ">=14.0.0",
-    "npm": ">=6.0.0"
+    "node": "18.x",
+    "npm": ">=8.0.0"
   },
   "keywords": ["loup-garou", "werewolf", "game", "multiplayer", "websocket"],
   "author": "Votre nom",
