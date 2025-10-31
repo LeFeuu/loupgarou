@@ -11,7 +11,16 @@ let gameState = {
     selectedTarget: null,
     players: [],
     phase: 'lobby',
-    timeRemaining: 0
+    timeRemaining: 0,
+    roleConfig: {
+        loupGarou: 1,
+        voyante: true,
+        sorciere: false,
+        chasseur: false,
+        cupidon: false,
+        petiteFille: false,
+        autoBalance: true
+    }
 };
 
 // Éléments DOM
@@ -26,6 +35,18 @@ const elements = {
     // Home screen
     createGameBtn: document.getElementById('createGameBtn'),
     joinGameBtn: document.getElementById('joinGameBtn'),
+    
+    // Create game modal
+    createModal: document.getElementById('createModal'),
+    closeCreateModal: document.getElementById('closeCreateModal'),
+    hostPlayerName: document.getElementById('hostPlayerName'),
+    gameNameInput: document.getElementById('gameNameInput'),
+    publicGame: document.getElementById('publicGame'),
+    privateGame: document.getElementById('privateGame'),
+    maxPlayersSelect: document.getElementById('maxPlayersSelect'),
+    confirmCreateGame: document.getElementById('confirmCreateGame'),
+    
+    // Join game modal
     joinModal: document.getElementById('joinModal'),
     closeModal: document.getElementById('closeModal'),
     playerName: document.getElementById('playerName'),
@@ -33,6 +54,9 @@ const elements = {
     confirmJoin: document.getElementById('confirmJoin'),
     modalTitle: document.getElementById('modalTitle'),
     gameIdGroup: document.getElementById('gameIdGroup'),
+    
+    // Public games list
+    publicGamesList: document.getElementById('publicGamesList'),
     
     // Lobby screen
     currentGameId: document.getElementById('currentGameId'),
@@ -67,13 +91,27 @@ const elements = {
 document.addEventListener('DOMContentLoaded', () => {
     initializeEventListeners();
     showScreen('home');
+    loadPublicGames();
 });
+
+function loadPublicGames() {
+    socket.emit('getPublicGames');
+}
 
 // Gestion des événements
 function initializeEventListeners() {
     // Home screen events
-    elements.createGameBtn.addEventListener('click', () => openJoinModal(true));
-    elements.joinGameBtn.addEventListener('click', () => openJoinModal(false));
+    elements.createGameBtn.addEventListener('click', openCreateModal);
+    elements.joinGameBtn.addEventListener('click', openJoinModal);
+    
+    // Create game modal events
+    elements.closeCreateModal.addEventListener('click', closeCreateModal);
+    elements.confirmCreateGame.addEventListener('click', handleCreateGame);
+    elements.hostPlayerName.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handleCreateGame();
+    });
+    
+    // Join game modal events
     elements.closeModal.addEventListener('click', closeJoinModal);
     elements.confirmJoin.addEventListener('click', handleJoinGame);
     elements.playerName.addEventListener('keypress', (e) => {
@@ -102,6 +140,10 @@ function initializeEventListeners() {
     elements.joinModal.addEventListener('click', (e) => {
         if (e.target === elements.joinModal) closeJoinModal();
     });
+    
+    elements.createModal.addEventListener('click', (e) => {
+        if (e.target === elements.createModal) closeCreateModal();
+    });
 }
 
 // Socket events
@@ -116,7 +158,33 @@ socket.on('joinedGame', (data) => {
 socket.on('gameUpdate', (data) => {
     gameState.players = data.players;
     gameState.isHost = data.hostId === gameState.playerId;
+    gameState.roleConfig = data.roleConfig || {};
     updateLobby(data);
+});
+
+socket.on('roleConfigUpdated', (data) => {
+    gameState.roleConfig = data.roleConfig;
+    updateRoleConfigDisplay();
+    showNotification('Configuration des rôles mise à jour', 'success');
+});
+
+socket.on('gameCreated', (data) => {
+    gameState.playerId = data.playerId;
+    gameState.gameId = data.gameId;
+    gameState.players = data.gameInfo.players;
+    gameState.isHost = data.gameInfo.hostId === gameState.playerId;
+    gameState.roleConfig = data.gameInfo.roleConfig || {};
+    elements.currentGameId.textContent = data.gameId;
+    showScreen('lobby');
+    showNotification('Partie créée avec succès !', 'success');
+});
+
+socket.on('publicGamesList', (games) => {
+    displayPublicGames(games);
+});
+
+socket.on('publicGamesUpdated', (games) => {
+    displayPublicGames(games);
 });
 
 socket.on('roleAssigned', (data) => {
@@ -228,9 +296,19 @@ function showScreen(screenName) {
     gameState.currentScreen = screenName;
 }
 
-function openJoinModal(isCreating) {
-    elements.modalTitle.textContent = isCreating ? 'Créer une partie' : 'Rejoindre une partie';
-    elements.gameIdGroup.style.display = isCreating ? 'none' : 'block';
+function openCreateModal() {
+    elements.createModal.classList.add('active');
+    elements.hostPlayerName.focus();
+}
+
+function closeCreateModal() {
+    elements.createModal.classList.remove('active');
+    elements.hostPlayerName.value = '';
+    elements.gameNameInput.value = '';
+    elements.privateGame.checked = true;
+}
+
+function openJoinModal() {
     elements.joinModal.classList.add('active');
     elements.playerName.focus();
 }
@@ -239,6 +317,32 @@ function closeJoinModal() {
     elements.joinModal.classList.remove('active');
     elements.playerName.value = '';
     elements.gameId.value = '';
+}
+
+function handleCreateGame() {
+    const playerName = elements.hostPlayerName.value.trim();
+    const gameName = elements.gameNameInput.value.trim();
+    const isPublic = elements.publicGame.checked;
+    const maxPlayers = parseInt(elements.maxPlayersSelect.value);
+    
+    if (!playerName) {
+        showNotification('Veuillez entrer votre nom', 'error');
+        return;
+    }
+    
+    if (playerName.length > 20) {
+        showNotification('Le nom doit faire moins de 20 caractères', 'error');
+        return;
+    }
+    
+    socket.emit('createGame', {
+        playerName: playerName,
+        gameName: gameName || `Partie de ${playerName}`,
+        isPublic: isPublic,
+        maxPlayers: maxPlayers
+    });
+    
+    closeCreateModal();
 }
 
 function handleJoinGame() {
@@ -255,18 +359,80 @@ function handleJoinGame() {
         return;
     }
     
-    // Si on rejoint une partie existante, vérifier le code
-    if (elements.gameIdGroup.style.display !== 'none' && !gameId) {
+    if (!gameId) {
         showNotification('Veuillez entrer le code de la partie', 'error');
         return;
     }
     
     socket.emit('joinGame', {
         playerName: playerName,
-        gameId: gameId || null
+        gameId: gameId
     });
     
     closeJoinModal();
+}
+
+function displayPublicGames(games) {
+    const gamesList = elements.publicGamesList;
+    
+    if (!games || games.length === 0) {
+        gamesList.innerHTML = `
+            <div class="no-games-message">
+                <i class="fas fa-search"></i>
+                <p>Aucune partie publique disponible</p>
+                <small>Créez la première ou revenez plus tard</small>
+            </div>
+        `;
+        return;
+    }
+    
+    gamesList.innerHTML = games.map(game => `
+        <div class="game-card" onclick="joinPublicGame('${game.id}')">
+            <div class="game-header">
+                <h3 class="game-name">${game.gameName}</h3>
+                <span class="players-count">${game.currentPlayers}/${game.maxPlayers}</span>
+            </div>
+            <div class="game-info">
+                <div class="game-host">
+                    <i class="fas fa-crown"></i>
+                    <span>Hôte: ${game.hostName}</span>
+                </div>
+                <div class="game-time">
+                    <i class="fas fa-clock"></i>
+                    <span>Créée ${getTimeAgo(game.createdAt)}</span>
+                </div>
+            </div>
+            <button class="join-game-btn">
+                <i class="fas fa-arrow-right"></i>
+                Rejoindre la partie
+            </button>
+        </div>
+    `).join('');
+}
+
+function joinPublicGame(gameId) {
+    const playerName = prompt('Entrez votre nom:');
+    if (playerName && playerName.trim()) {
+        socket.emit('joinGame', {
+            playerName: playerName.trim(),
+            gameId: gameId
+        });
+    }
+}
+
+function getTimeAgo(dateString) {
+    const now = new Date();
+    const created = new Date(dateString);
+    const diffInMinutes = Math.floor((now - created) / (1000 * 60));
+    
+    if (diffInMinutes < 1) return 'à l\'instant';
+    if (diffInMinutes < 60) return `il y a ${diffInMinutes} min`;
+    
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    if (diffInHours < 24) return `il y a ${diffInHours}h`;
+    
+    const diffInDays = Math.floor(diffInHours / 24);
+    return `il y a ${diffInDays}j`;
 }
 
 function copyGameCode() {
@@ -311,6 +477,9 @@ function updateLobby(data) {
         } else {
             elements.startGameBtn.innerHTML = `<i class="fas fa-play"></i> Démarrer la partie (${4 - data.players.length} joueurs manquants)`;
         }
+        
+        // Afficher la configuration des rôles
+        updateRoleConfigDisplay();
     }
     
     // Afficher la liste des joueurs
@@ -707,6 +876,193 @@ function addSpyChatMessage(data) {
     
     spyDiv.appendChild(messageElement);
     spyDiv.scrollTop = spyDiv.scrollHeight;
+}
+
+function updateRoleConfigDisplay() {
+    if (!gameState.isHost) return;
+    
+    // Chercher s'il y a déjà une section de configuration
+    let configSection = document.getElementById('roleConfigSection');
+    
+    if (!configSection) {
+        // Créer la section de configuration des rôles
+        configSection = document.createElement('div');
+        configSection.id = 'roleConfigSection';
+        configSection.className = 'role-config-section';
+        configSection.style.cssText = `
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        `;
+        
+        // Insérer avant les contrôles d'hôte
+        const hostControls = elements.hostControls;
+        hostControls.parentNode.insertBefore(configSection, hostControls);
+    }
+    
+    configSection.innerHTML = `
+        <h3 style="margin-bottom: 1rem; color: var(--primary-color);">
+            <i class="fas fa-cogs"></i> Configuration des Rôles
+        </h3>
+        
+        <div class="config-mode" style="margin-bottom: 1.5rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                <input type="checkbox" id="autoBalance" ${gameState.roleConfig.autoBalance ? 'checked' : ''} 
+                       onchange="updateRoleConfig('autoBalance', this.checked)">
+                <span>Équilibrage automatique</span>
+            </label>
+        </div>
+        
+        <div id="manualConfig" style="display: ${gameState.roleConfig.autoBalance ? 'none' : 'block'};">
+            <div class="role-config-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                
+                <div class="role-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--card-bg); border-radius: 8px;">
+                    <span>🐺 Loups-Garous</span>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <button onclick="changeWerewolfCount(-1)" class="btn-small">-</button>
+                        <span id="werewolfCount" style="min-width: 20px; text-align: center;">${gameState.roleConfig.loupGarou}</span>
+                        <button onclick="changeWerewolfCount(1)" class="btn-small">+</button>
+                    </div>
+                </div>
+                
+                <div class="role-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--card-bg); border-radius: 8px;">
+                    <span>🔮 Voyante</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${gameState.roleConfig.voyante ? 'checked' : ''} 
+                               onchange="updateRoleConfig('voyante', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+                <div class="role-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--card-bg); border-radius: 8px;">
+                    <span>🧙‍♀️ Sorcière</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${gameState.roleConfig.sorciere ? 'checked' : ''} 
+                               onchange="updateRoleConfig('sorciere', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+                <div class="role-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--card-bg); border-radius: 8px;">
+                    <span>🏹 Chasseur</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${gameState.roleConfig.chasseur ? 'checked' : ''} 
+                               onchange="updateRoleConfig('chasseur', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+                <div class="role-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--card-bg); border-radius: 8px;">
+                    <span>💘 Cupidon</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${gameState.roleConfig.cupidon ? 'checked' : ''} 
+                               onchange="updateRoleConfig('cupidon', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+                <div class="role-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--card-bg); border-radius: 8px;">
+                    <span>👧 Petite Fille</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${gameState.roleConfig.petiteFille ? 'checked' : ''} 
+                               onchange="updateRoleConfig('petiteFille', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+            </div>
+            
+            <div class="role-summary" style="margin-top: 1rem; padding: 1rem; background: var(--card-light); border-radius: 8px;">
+                <h4 style="margin-bottom: 0.5rem;">Résumé :</h4>
+                <div id="roleSummary" style="font-size: 0.9rem; color: var(--text-muted);"></div>
+            </div>
+        </div>
+    `;
+    
+    updateRoleSummary();
+}
+
+function updateRoleConfig(key, value) {
+    gameState.roleConfig[key] = value;
+    
+    // Gérer l'affichage du mode manuel
+    if (key === 'autoBalance') {
+        const manualConfig = document.getElementById('manualConfig');
+        if (manualConfig) {
+            manualConfig.style.display = value ? 'none' : 'block';
+        }
+    }
+    
+    updateRoleSummary();
+    
+    // Envoyer au serveur
+    socket.emit('updateRoleConfig', {
+        roleConfig: gameState.roleConfig
+    });
+}
+
+function changeWerewolfCount(delta) {
+    const newCount = Math.max(1, Math.min(4, gameState.roleConfig.loupGarou + delta));
+    gameState.roleConfig.loupGarou = newCount;
+    
+    document.getElementById('werewolfCount').textContent = newCount;
+    updateRoleSummary();
+    
+    socket.emit('updateRoleConfig', {
+        roleConfig: gameState.roleConfig
+    });
+}
+
+function updateRoleSummary() {
+    const summaryDiv = document.getElementById('roleSummary');
+    if (!summaryDiv) return;
+    
+    if (gameState.roleConfig.autoBalance) {
+        summaryDiv.innerHTML = 'Mode automatique : Les rôles sont distribués automatiquement selon le nombre de joueurs.';
+        return;
+    }
+    
+    const playerCount = gameState.players.length;
+    let totalSpecialRoles = gameState.roleConfig.loupGarou;
+    let rolesList = [`${gameState.roleConfig.loupGarou} Loup${gameState.roleConfig.loupGarou > 1 ? 's' : ''}-Garou`];
+    
+    if (gameState.roleConfig.voyante) {
+        totalSpecialRoles++;
+        rolesList.push('1 Voyante');
+    }
+    if (gameState.roleConfig.sorciere) {
+        totalSpecialRoles++;
+        rolesList.push('1 Sorcière');
+    }
+    if (gameState.roleConfig.chasseur) {
+        totalSpecialRoles++;
+        rolesList.push('1 Chasseur');
+    }
+    if (gameState.roleConfig.cupidon) {
+        totalSpecialRoles++;
+        rolesList.push('1 Cupidon');
+    }
+    if (gameState.roleConfig.petiteFille) {
+        totalSpecialRoles++;
+        rolesList.push('1 Petite Fille');
+    }
+    
+    const villagerCount = Math.max(0, playerCount - totalSpecialRoles);
+    if (villagerCount > 0) {
+        rolesList.push(`${villagerCount} Villageois`);
+    }
+    
+    summaryDiv.innerHTML = rolesList.join(', ');
+    
+    // Vérifications d'équilibre
+    if (totalSpecialRoles > playerCount) {
+        summaryDiv.innerHTML += '<br><span style="color: var(--danger-color);">⚠️ Trop de rôles spéciaux</span>';
+    } else if (gameState.roleConfig.loupGarou >= Math.ceil(playerCount / 2)) {
+        summaryDiv.innerHTML += '<br><span style="color: var(--danger-color);">⚠️ Trop de loups-garous</span>';
+    }
 }
 
 function vote() {

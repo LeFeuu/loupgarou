@@ -46,7 +46,7 @@ const PHASES = {
 };
 
 class Game {
-    constructor(id, hostId) {
+    constructor(id, hostId, options = {}) {
         this.id = id;
         this.hostId = hostId;
         this.players = new Map();
@@ -60,10 +60,24 @@ class Game {
         this.confirmedActions = new Set();
         this.lovers = []; // Pour Cupidon
         this.werewolfTarget = null; // Cible sélectionnée par les loups-garous
+        this.roleConfig = { // Configuration des rôles par l'hôte
+            loupGarou: 1,
+            voyante: true,
+            sorciere: false,
+            chasseur: false,
+            cupidon: false,
+            petiteFille: false,
+            autoBalance: true // Équilibrage automatique
+        };
+        // Nouvelles propriétés pour les parties publiques/privées
+        this.isPublic = options.isPublic || false;
+        this.maxPlayers = options.maxPlayers || 10;
+        this.gameName = options.gameName || 'Partie de Loup-Garou';
+        this.createdAt = new Date();
     }
 
     addPlayer(playerId, playerName) {
-        if (this.players.size >= 12) return false;
+        if (this.players.size >= this.maxPlayers) return false;
         
         this.players.set(playerId, {
             id: playerId,
@@ -89,42 +103,68 @@ class Game {
         
         if (playerCount < 4) return false;
 
-        // Distribution des rôles selon le nombre de joueurs
         let roles = [];
         
-        // Base minimale : 1 loup-garou + voyante
-        roles.push(ROLES.LOUP_GAROU, ROLES.VOYANTE);
-        
-        // Ajouter des villageois de base
-        for (let i = 2; i < playerCount; i++) {
-            roles.push(ROLES.VILLAGEOIS);
-        }
-        
-        // Distribution progressive des rôles spéciaux
-        if (playerCount >= 5) {
-            roles[roles.length - 1] = ROLES.SORCIERE;
-            roles.push(ROLES.VILLAGEOIS);
-        }
-        
-        if (playerCount >= 6) {
-            roles[roles.length - 1] = ROLES.CHASSEUR;
-            roles.push(ROLES.VILLAGEOIS);
-        }
-        
-        if (playerCount >= 7) {
-            roles[roles.length - 1] = ROLES.CUPIDON;
-            roles.push(ROLES.VILLAGEOIS);
-        }
-        
-        if (playerCount >= 8) {
-            roles[roles.length - 1] = ROLES.PETITE_FILLE;
-            roles.push(ROLES.VILLAGEOIS);
-        }
-        
-        if (playerCount >= 9) {
-            // Ajouter un 2ème loup-garou
-            roles[roles.length - 1] = ROLES.LOUP_GAROU;
-            roles.push(ROLES.VILLAGEOIS);
+        if (this.roleConfig.autoBalance) {
+            // Mode automatique (ancien système)
+            roles.push(ROLES.LOUP_GAROU, ROLES.VOYANTE);
+            
+            for (let i = 2; i < playerCount; i++) {
+                roles.push(ROLES.VILLAGEOIS);
+            }
+            
+            if (playerCount >= 5 && this.roleConfig.sorciere) {
+                roles[roles.length - 1] = ROLES.SORCIERE;
+                roles.push(ROLES.VILLAGEOIS);
+            }
+            
+            if (playerCount >= 6 && this.roleConfig.chasseur) {
+                roles[roles.length - 1] = ROLES.CHASSEUR;
+                roles.push(ROLES.VILLAGEOIS);
+            }
+            
+            if (playerCount >= 7 && this.roleConfig.cupidon) {
+                roles[roles.length - 1] = ROLES.CUPIDON;
+                roles.push(ROLES.VILLAGEOIS);
+            }
+            
+            if (playerCount >= 8 && this.roleConfig.petiteFille) {
+                roles[roles.length - 1] = ROLES.PETITE_FILLE;
+                roles.push(ROLES.VILLAGEOIS);
+            }
+            
+            if (playerCount >= 9) {
+                roles[roles.length - 1] = ROLES.LOUP_GAROU;
+                roles.push(ROLES.VILLAGEOIS);
+            }
+        } else {
+            // Mode configuration manuelle
+            // Ajouter les loups-garous
+            for (let i = 0; i < this.roleConfig.loupGarou; i++) {
+                roles.push(ROLES.LOUP_GAROU);
+            }
+            
+            // Ajouter la voyante si activée
+            if (this.roleConfig.voyante) {
+                roles.push(ROLES.VOYANTE);
+            }
+            
+            // Ajouter les autres rôles si activés
+            if (this.roleConfig.sorciere) roles.push(ROLES.SORCIERE);
+            if (this.roleConfig.chasseur) roles.push(ROLES.CHASSEUR);
+            if (this.roleConfig.cupidon) roles.push(ROLES.CUPIDON);
+            if (this.roleConfig.petiteFille) roles.push(ROLES.PETITE_FILLE);
+            
+            // Compléter avec des villageois
+            while (roles.length < playerCount) {
+                roles.push(ROLES.VILLAGEOIS);
+            }
+            
+            // Vérifier l'équilibre (au moins 1 loup, pas trop de loups)
+            const werewolfCount = roles.filter(r => r === ROLES.LOUP_GAROU).length;
+            if (werewolfCount === 0 || werewolfCount >= Math.ceil(playerCount / 2)) {
+                return false; // Configuration invalide
+            }
         }
 
         // Mélanger les rôles
@@ -434,37 +474,101 @@ class Game {
             phase: this.phase,
             isStarted: this.isStarted,
             round: this.round,
-            timeRemaining: this.timeRemaining
+            timeRemaining: this.timeRemaining,
+            roleConfig: this.roleConfig,
+            isPublic: this.isPublic,
+            maxPlayers: this.maxPlayers,
+            gameName: this.gameName,
+            createdAt: this.createdAt
         };
     }
+}
+
+// Fonction pour obtenir les parties publiques disponibles
+function getPublicGames() {
+    const publicGames = [];
+    for (const game of games.values()) {
+        if (game.isPublic && !game.isStarted && game.players.size < game.maxPlayers) {
+            publicGames.push({
+                id: game.id,
+                gameName: game.gameName,
+                hostName: Array.from(game.players.values()).find(p => p.id === game.hostId)?.name || 'Hôte',
+                currentPlayers: game.players.size,
+                maxPlayers: game.maxPlayers,
+                createdAt: game.createdAt
+            });
+        }
+    }
+    // Trier par date de création (plus récent en premier)
+    return publicGames.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
 // Gestion des connexions WebSocket
 io.on('connection', (socket) => {
     console.log('Nouveau joueur connecté:', socket.id);
 
-    // Rejoindre une partie
+    // Obtenir la liste des parties publiques
+    socket.on('getPublicGames', () => {
+        socket.emit('publicGamesList', getPublicGames());
+    });
+
+    // Créer une nouvelle partie
+    socket.on('createGame', (data) => {
+        const { playerName, isPublic = false, maxPlayers = 10, gameName } = data;
+        
+        const newGameId = uuidv4().substring(0, 6).toUpperCase();
+        const gameOptions = {
+            isPublic,
+            maxPlayers: Math.max(4, Math.min(maxPlayers, 12)), // Entre 4 et 12 joueurs
+            gameName: gameName || `Partie de ${playerName}`
+        };
+        
+        const game = new Game(newGameId, socket.id, gameOptions);
+        games.set(newGameId, game);
+        
+        if (game.addPlayer(socket.id, playerName)) {
+            players.set(socket.id, { gameId: game.id, name: playerName });
+            socket.join(game.id);
+            
+            socket.emit('gameCreated', { 
+                gameId: game.id, 
+                playerId: socket.id,
+                gameInfo: game.getPublicInfo()
+            });
+            
+            // Notifier tous les clients des parties publiques mises à jour
+            if (isPublic) {
+                io.emit('publicGamesUpdated', getPublicGames());
+            }
+        } else {
+            socket.emit('error', 'Impossible de créer la partie');
+        }
+    });
+
+    // Rejoindre une partie existante
     socket.on('joinGame', (data) => {
         const { gameId, playerName } = data;
-        let game;
-
-        if (gameId && games.has(gameId)) {
-            game = games.get(gameId);
-        } else {
-            // Créer une nouvelle partie
-            const newGameId = uuidv4().substring(0, 6).toUpperCase();
-            game = new Game(newGameId, socket.id);
-            games.set(newGameId, game);
+        
+        if (!gameId || !games.has(gameId)) {
+            socket.emit('error', 'Partie introuvable');
+            return;
         }
-
+        
+        const game = games.get(gameId);
+        
         if (game.addPlayer(socket.id, playerName)) {
             players.set(socket.id, { gameId: game.id, name: playerName });
             socket.join(game.id);
             
             io.to(game.id).emit('gameUpdate', game.getPublicInfo());
             socket.emit('joinedGame', { gameId: game.id, playerId: socket.id });
+            
+            // Mettre à jour la liste des parties publiques si nécessaire
+            if (game.isPublic) {
+                io.emit('publicGamesUpdated', getPublicGames());
+            }
         } else {
-            socket.emit('error', 'Impossible de rejoindre la partie');
+            socket.emit('error', 'Impossible de rejoindre la partie (complète ou déjà commencée)');
         }
     });
 
@@ -486,7 +590,55 @@ io.on('connection', (socket) => {
                 
                 io.to(game.id).emit('gameStarted', game.getPublicInfo());
             } else {
-                socket.emit('error', 'Minimum 4 joueurs requis');
+                socket.emit('error', 'Impossible de démarrer : minimum 4 joueurs requis ou configuration de rôles invalide');
+            }
+        }
+    });
+
+    // Configuration des rôles (seulement pour l'hôte)
+    socket.on('updateRoleConfig', (data) => {
+        const playerData = players.get(socket.id);
+        if (!playerData) return;
+
+        const game = games.get(playerData.gameId);
+        if (game && game.hostId === socket.id && !game.isStarted) {
+            // Mettre à jour la configuration
+            if (data.roleConfig) {
+                game.roleConfig = { ...game.roleConfig, ...data.roleConfig };
+                
+                // Valider la configuration
+                const playerCount = game.players.size;
+                if (!game.roleConfig.autoBalance) {
+                    // Vérifier que la config manuelle est valide
+                    const totalSpecialRoles = 
+                        game.roleConfig.loupGarou +
+                        (game.roleConfig.voyante ? 1 : 0) +
+                        (game.roleConfig.sorciere ? 1 : 0) +
+                        (game.roleConfig.chasseur ? 1 : 0) +
+                        (game.roleConfig.cupidon ? 1 : 0) +
+                        (game.roleConfig.petiteFille ? 1 : 0);
+                    
+                    if (totalSpecialRoles > playerCount) {
+                        socket.emit('error', 'Trop de rôles spéciaux pour le nombre de joueurs');
+                        return;
+                    }
+                    
+                    if (game.roleConfig.loupGarou === 0) {
+                        socket.emit('error', 'Il faut au moins 1 loup-garou');
+                        return;
+                    }
+                    
+                    if (game.roleConfig.loupGarou >= Math.ceil(playerCount / 2)) {
+                        socket.emit('error', 'Trop de loups-garous par rapport aux villageois');
+                        return;
+                    }
+                }
+                
+                // Envoyer la mise à jour à tous les joueurs
+                io.to(game.id).emit('roleConfigUpdated', {
+                    roleConfig: game.roleConfig,
+                    gameInfo: game.getPublicInfo()
+                });
             }
         }
     });

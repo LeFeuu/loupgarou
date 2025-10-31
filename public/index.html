@@ -34,7 +34,85 @@
                 </div>
             </div>
 
-            <!-- Modal pour créer/rejoindre une partie -->
+            <!-- Liste des parties publiques -->
+            <div class="public-games-section">
+                <div class="container">
+                    <h2 class="section-title">
+                        <i class="fas fa-globe"></i>
+                        Parties Publiques
+                    </h2>
+                    <div id="publicGamesList" class="games-grid">
+                        <div class="no-games-message">
+                            <i class="fas fa-search"></i>
+                            <p>Aucune partie publique disponible</p>
+                            <small>Créez la première ou revenez plus tard</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal pour créer une partie -->
+            <div id="createModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Créer une partie</h2>
+                        <button class="close-btn" id="closeCreateModal">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label for="hostPlayerName">Votre nom</label>
+                            <input type="text" id="hostPlayerName" placeholder="Entrez votre nom" maxlength="20">
+                        </div>
+                        <div class="form-group">
+                            <label for="gameNameInput">Nom de la partie</label>
+                            <input type="text" id="gameNameInput" placeholder="Ma partie de Loup-Garou" maxlength="30">
+                        </div>
+                        <div class="form-group">
+                            <label>Type de partie</label>
+                            <div class="radio-group">
+                                <label class="radio-option">
+                                    <input type="radio" name="gameType" value="public" id="publicGame">
+                                    <span class="radio-custom"></span>
+                                    <div class="radio-label">
+                                        <strong>Publique</strong>
+                                        <small>Visible dans la liste, tout le monde peut rejoindre</small>
+                                    </div>
+                                </label>
+                                <label class="radio-option">
+                                    <input type="radio" name="gameType" value="private" id="privateGame" checked>
+                                    <span class="radio-custom"></span>
+                                    <div class="radio-label">
+                                        <strong>Privée</strong>
+                                        <small>Accessible uniquement avec le code</small>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="maxPlayersSelect">Nombre maximum de joueurs</label>
+                            <select id="maxPlayersSelect">
+                                <option value="4">4 joueurs</option>
+                                <option value="5">5 joueurs</option>
+                                <option value="6">6 joueurs</option>
+                                <option value="7">7 joueurs</option>
+                                <option value="8">8 joueurs</option>
+                                <option value="9">9 joueurs</option>
+                                <option value="10" selected>10 joueurs</option>
+                                <option value="11">11 joueurs</option>
+                                <option value="12">12 joueurs</option>
+                            </select>
+                        </div>
+                        <button id="confirmCreateGame" class="btn btn-primary full-width">
+                            <i class="fas fa-play"></i>
+                            Créer la partie
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal pour rejoindre une partie -->
             <div id="joinModal" class="modal">
                 <div class="modal-content">
                     <div class="modal-header">
@@ -54,7 +132,7 @@
                         </div>
                         <button id="confirmJoin" class="btn btn-primary full-width">
                             <i class="fas fa-arrow-right"></i>
-                            Commencer
+                            Rejoindre
                         </button>
                     </div>
                 </div>
