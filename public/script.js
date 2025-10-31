@@ -218,7 +218,7 @@ socket.on('timerUpdate', (data) => {
 socket.on('nightKills', (killedPlayers) => {
     if (killedPlayers.length > 0) {
         killedPlayers.forEach(killed => {
-            showNotification(`${killed.playerName} a été éliminé(e) par les loups-garous !`, 'error');
+            showRoleReveal(killed.playerName, killed.playerRole, `Éliminé(e) par les loups-garous`);
         });
     } else {
         showNotification('Personne n\'a été tué cette nuit', 'info');
@@ -228,11 +228,17 @@ socket.on('nightKills', (killedPlayers) => {
 });
 
 socket.on('playerEliminated', (data) => {
-    showNotification(`${data.playerName} a été éliminé(e) par vote (${data.votes} votes)`, 'warning');
+    showRoleReveal(data.playerName, data.playerRole, `Éliminé(e) par vote (${data.votes} votes)`);
 });
 
 socket.on('roleRevealed', (data) => {
     showNotification(`${data.playerName} est ${getRoleDisplayName(data.role)}`, 'info');
+});
+
+socket.on('witchInfo', (data) => {
+    // Informer la sorcière de la cible des loups-garous
+    gameState.werewolfTarget = data.targetId;
+    updateActionPanel();
 });
 
 socket.on('timerAccelerated', (data) => {
@@ -573,7 +579,10 @@ function getPhaseDisplayName(phase) {
         'night': 'Nuit',
         'day': 'Jour',
         'vote': 'Vote',
-        'lobby': 'Lobby'
+        'lobby': 'Lobby',
+        'cupidon': 'Tour de Cupidon',
+        'voyante': 'Tour de la Voyante',
+        'sorciere': 'Tour de la Sorcière'
     };
     return phaseNames[phase] || phase;
 }
@@ -638,6 +647,28 @@ function selectPlayer(playerId, cardElement) {
     // Vérifier si on peut sélectionner ce joueur
     if (!canSelectPlayer(playerId)) return;
     
+    // Logique spéciale pour Cupidon
+    if (gameState.phase === 'cupidon' && gameState.playerRole === 'cupidon') {
+        if (!gameState.selectedLovers) gameState.selectedLovers = [];
+        
+        // Si déjà sélectionné, désélectionner
+        if (gameState.selectedLovers.includes(playerId)) {
+            gameState.selectedLovers = gameState.selectedLovers.filter(id => id !== playerId);
+            cardElement.classList.remove('selected');
+        } else if (gameState.selectedLovers.length < 2) {
+            // Sélectionner si moins de 2 amoureux
+            gameState.selectedLovers.push(playerId);
+            cardElement.classList.add('selected');
+        } else {
+            showNotification('Vous ne pouvez sélectionner que 2 joueurs', 'error');
+            return;
+        }
+        
+        updateActionPanel();
+        return;
+    }
+    
+    // Logique normale pour les autres phases
     // Désélectionner tous les autres joueurs
     document.querySelectorAll('.game-player-card').forEach(card => {
         card.classList.remove('selected');
@@ -652,8 +683,8 @@ function selectPlayer(playerId, cardElement) {
 }
 
 function canSelectPlayer(playerId) {
-    // Ne peut pas se sélectionner soi-même
-    if (playerId === gameState.playerId) return false;
+    // Ne peut pas se sélectionner soi-même (sauf pour Cupidon)
+    if (playerId === gameState.playerId && gameState.phase !== 'cupidon') return false;
     
     // Ne peut sélectionner que des joueurs vivants
     const player = gameState.players.find(p => p.id === playerId);
@@ -662,16 +693,88 @@ function canSelectPlayer(playerId) {
     // Vérifier selon la phase et le rôle
     if (gameState.phase === 'vote') return true;
     if (gameState.phase === 'night' && gameState.playerRole === 'loup-garou') return true;
-    if (gameState.phase === 'night' && gameState.playerRole === 'voyante') return true;
+    if (gameState.phase === 'voyante' && gameState.playerRole === 'voyante') return true;
+    if (gameState.phase === 'sorciere' && gameState.playerRole === 'sorciere') return true;
+    if (gameState.phase === 'cupidon' && gameState.playerRole === 'cupidon') return true;
     
     return false;
 }
 
 function updateActionPanel() {
+    // Vérifier si le joueur est vivant
+    const currentPlayer = gameState.players.find(p => p.id === gameState.playerId);
+    const isAlive = currentPlayer && currentPlayer.isAlive;
+    
     let title = '';
     let content = '';
     
+    // Si le joueur est mort, afficher seulement un message informatif
+    if (!isAlive) {
+        title = 'Vous êtes mort 💀';
+        content = `
+            <div class="dead-player-info">
+                <p style="color: var(--danger-color); text-align: center;">
+                    <i class="fas fa-skull"></i><br>
+                    Vous ne pouvez plus participer au jeu.<br>
+                    Observez la suite en spectateur.
+                </p>
+            </div>
+        `;
+        elements.actionPanel.innerHTML = `
+            <div class="action-header">
+                <h3>${title}</h3>
+            </div>
+            <div class="action-content">
+                ${content}
+            </div>
+        `;
+        return;
+    }
+    
     switch (gameState.phase) {
+        case 'cupidon':
+            if (gameState.playerRole === 'cupidon') {
+                title = 'Tour de Cupidon';
+                content = `
+                    <p>💘 <strong>Choisissez deux joueurs qui tomberont amoureux</strong></p>
+                    <p>Les amoureux connaîtront leur identité et mourront ensemble.</p>
+                    <div id="selectedLovers" style="margin: 1rem 0;">
+                        ${gameState.selectedLovers ? 
+                            `<p style="color: var(--primary-color);">Amoureux sélectionnés: ${gameState.selectedLovers.map(id => getPlayerName(id)).join(' ❤️ ')}</p>` :
+                            '<p style="color: var(--text-muted);">Sélectionnez deux joueurs</p>'
+                        }
+                    </div>
+                    ${gameState.selectedLovers && gameState.selectedLovers.length === 2 ? 
+                        `<button onclick="performCupidonAction()" class="btn btn-primary full-width">
+                            <i class="fas fa-heart"></i> Lier d'amour
+                        </button>` : 
+                        ''
+                    }
+                `;
+            } else {
+                title = 'Tour de Cupidon';
+                content = '<p>💘 Cupidon choisit les amoureux...</p>';
+            }
+            break;
+
+        case 'voyante':
+            if (gameState.playerRole === 'voyante') {
+                title = 'Tour de la Voyante';
+                content = `
+                    <p>🔮 <strong>Vous pouvez voir le rôle d'un joueur</strong></p>
+                    ${gameState.selectedTarget ? 
+                        `<button onclick="performNightAction('see')" class="btn btn-primary full-width">
+                            <i class="fas fa-eye"></i> Voir le rôle de ${getPlayerName(gameState.selectedTarget)}
+                        </button>` : 
+                        '<p style="color: var(--text-muted);">Sélectionnez un joueur</p>'
+                    }
+                `;
+            } else {
+                title = 'Tour de la Voyante';
+                content = '<p>🔮 La voyante consulte les esprits...</p>';
+            }
+            break;
+
         case 'night':
             if (gameState.playerRole === 'loup-garou') {
                 title = 'Phase de Nuit - Loup-Garou';
@@ -764,6 +867,38 @@ function updateActionPanel() {
                 </p>
             `;
             break;
+
+        case 'sorciere':
+            if (gameState.playerRole === 'sorciere') {
+                title = 'Tour de la Sorcière';
+                content = `
+                    <p>🧪 <strong>Vous avez une potion de vie et une potion de mort</strong></p>
+                    <div style="background: var(--card-bg); padding: 1rem; border-radius: 12px; margin: 1rem 0;">
+                        ${gameState.werewolfTarget ? 
+                            `<p style="color: var(--danger-color);">⚰️ ${getPlayerName(gameState.werewolfTarget)} va mourir</p>
+                             <button onclick="performWitchAction('heal')" class="btn btn-success full-width" style="margin-bottom: 0.5rem;">
+                                <i class="fas fa-heart"></i> Sauver ${getPlayerName(gameState.werewolfTarget)}
+                             </button>` :
+                            '<p style="color: var(--success-color);">✨ Personne n\'a été attaqué cette nuit</p>'
+                        }
+                    </div>
+                    <div style="border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                        ${gameState.selectedTarget ? 
+                            `<button onclick="performWitchAction('poison')" class="btn btn-danger full-width">
+                                <i class="fas fa-skull-crossbones"></i> Empoisonner ${getPlayerName(gameState.selectedTarget)}
+                            </button>` : 
+                            '<p style="color: var(--text-muted);">Sélectionnez un joueur à empoisonner</p>'
+                        }
+                    </div>
+                    <button onclick="performWitchAction('skip')" class="btn btn-secondary full-width" style="margin-top: 1rem;">
+                        <i class="fas fa-forward"></i> Passer mon tour
+                    </button>
+                `;
+            } else {
+                title = 'Tour de la Sorcière';
+                content = '<p>🧪 La sorcière prépare ses potions...</p>';
+            }
+            break;
             
         case 'vote':
             title = 'Phase de Vote';
@@ -797,7 +932,17 @@ function getPlayerName(playerId) {
 }
 
 function performNightAction(actionType) {
-    if (!gameState.selectedTarget && actionType !== 'heal') return;
+    // Vérifier si le joueur est vivant
+    const currentPlayer = gameState.players.find(p => p.id === gameState.playerId);
+    if (!currentPlayer || !currentPlayer.isAlive) {
+        showNotification('Les joueurs morts ne peuvent pas agir la nuit', 'error');
+        return;
+    }
+    
+    if (!gameState.selectedTarget && actionType !== 'heal') {
+        showNotification('Sélectionnez d\'abord une cible', 'error');
+        return;
+    }
     
     const targetName = gameState.selectedTarget ? getPlayerName(gameState.selectedTarget) : 'la victime';
     
@@ -999,6 +1144,90 @@ function updateRoleConfigDisplay() {
     updateRoleSummary();
 }
 
+function showRoleReveal(playerName, playerRole, cause) {
+    // Créer le modal de révélation
+    const modal = document.createElement('div');
+    modal.className = `role-reveal-modal role-${playerRole}`;
+    
+    // Obtenir l'emoji et la description du rôle
+    const roleInfo = getRoleInfo(playerRole);
+    
+    modal.innerHTML = `
+        <div class="role-reveal-content">
+            <div class="role-reveal-skull">💀</div>
+            <h2 class="role-reveal-name">${playerName}</h2>
+            <p class="role-reveal-cause">${cause}</p>
+            <div class="role-reveal-role">${roleInfo.name}</div>
+            <p class="role-reveal-description">${roleInfo.description}</p>
+            <button class="role-reveal-close" onclick="closeRoleReveal(this)">
+                <i class="fas fa-times"></i> Fermer
+            </button>
+        </div>
+    `;
+    
+    // Ajouter au DOM
+    document.body.appendChild(modal);
+    
+    // Supprimer automatiquement après 8 secondes
+    setTimeout(() => {
+        if (modal.parentNode) {
+            modal.style.animation = 'fadeInModal 0.3s ease-out reverse';
+            setTimeout(() => {
+                if (modal.parentNode) {
+                    document.body.removeChild(modal);
+                }
+            }, 300);
+        }
+    }, 8000);
+}
+
+function closeRoleReveal(button) {
+    const modal = button.closest('.role-reveal-modal');
+    if (modal) {
+        modal.style.animation = 'fadeInModal 0.3s ease-out reverse';
+        setTimeout(() => {
+            if (modal.parentNode) {
+                document.body.removeChild(modal);
+            }
+        }, 300);
+    }
+}
+
+function getRoleInfo(role) {
+    const roleInfos = {
+        'villageois': {
+            name: 'Villageois',
+            description: 'Un citoyen innocent du village'
+        },
+        'loup-garou': {
+            name: 'Loup-Garou',
+            description: 'Une créature maléfique qui dévore les villageois'
+        },
+        'voyante': {
+            name: 'Voyante',
+            description: 'Elle peut voir le rôle d\'un joueur chaque nuit'
+        },
+        'sorciere': {
+            name: 'Sorcière',
+            description: 'Elle possède une potion de vie et une potion de mort'
+        },
+        'chasseur': {
+            name: 'Chasseur',
+            description: 'Il peut éliminer un joueur en mourant'
+        },
+        'cupidon': {
+            name: 'Cupidon',
+            description: 'Il lie deux joueurs en amoureux au début de la partie'
+        },
+        'petite-fille': {
+            name: 'Petite Fille',
+            description: 'Elle peut espionner les loups-garous la nuit'
+        }
+    };
+    
+    return roleInfos[role] || { name: role, description: 'Rôle mystérieux' };
+}
+
 function updateRoleConfig(key, value) {
     gameState.roleConfig[key] = value;
     
@@ -1080,13 +1309,96 @@ function updateRoleSummary() {
 }
 
 function vote() {
-    if (!gameState.selectedTarget) return;
+    // Vérifier si le joueur est vivant
+    const currentPlayer = gameState.players.find(p => p.id === gameState.playerId);
+    if (!currentPlayer || !currentPlayer.isAlive) {
+        showNotification('Les joueurs morts ne peuvent pas voter', 'error');
+        return;
+    }
+    
+    if (!gameState.selectedTarget) {
+        showNotification('Sélectionnez d\'abord un joueur à éliminer', 'error');
+        return;
+    }
+    
+    // Vérifier que la cible est vivante
+    const target = gameState.players.find(p => p.id === gameState.selectedTarget);
+    if (!target || !target.isAlive) {
+        showNotification('Vous ne pouvez pas voter pour un joueur mort', 'error');
+        return;
+    }
     
     socket.emit('vote', {
         targetId: gameState.selectedTarget
     });
     
     showNotification('Vote confirmé !', 'success');
+    gameState.selectedTarget = null;
+    
+    // Désélectionner visuellement
+    document.querySelectorAll('.game-player-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
+    updateActionPanel();
+}
+
+function performCupidonAction() {
+    if (!gameState.selectedLovers || gameState.selectedLovers.length !== 2) {
+        showNotification('Sélectionnez exactement deux joueurs', 'error');
+        return;
+    }
+    
+    socket.emit('nightAction', {
+        action: 'cupid',
+        lovers: gameState.selectedLovers
+    });
+    
+    showNotification('Vous avez lié les deux joueurs d\'amour', 'success');
+    gameState.selectedLovers = null;
+    
+    // Désélectionner visuellement
+    document.querySelectorAll('.game-player-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
+    updateActionPanel();
+}
+
+function performWitchAction(actionType) {
+    const currentPlayer = gameState.players.find(p => p.id === gameState.playerId);
+    if (!currentPlayer || !currentPlayer.isAlive) {
+        showNotification('Les joueurs morts ne peuvent pas agir', 'error');
+        return;
+    }
+    
+    if (actionType === 'poison' && !gameState.selectedTarget) {
+        showNotification('Sélectionnez d\'abord une cible à empoisonner', 'error');
+        return;
+    }
+    
+    let action = { action: actionType };
+    
+    if (actionType === 'poison') {
+        action.targetId = gameState.selectedTarget;
+    }
+    
+    socket.emit('nightAction', action);
+    
+    // Messages de confirmation
+    switch (actionType) {
+        case 'heal':
+            showNotification('Vous utilisez la potion de vie', 'success');
+            break;
+        case 'poison':
+            const targetName = getPlayerName(gameState.selectedTarget);
+            showNotification(`Vous empoisonnez ${targetName}`, 'success');
+            break;
+        case 'skip':
+            showNotification('Vous passez votre tour', 'info');
+            break;
+    }
+    
     gameState.selectedTarget = null;
     
     // Désélectionner visuellement
@@ -1145,20 +1457,17 @@ function addChatMessage(data) {
 }
 
 function updateEndScreen(data) {
-    if (data.winner === 'villagers') {
-        elements.winnerTitle.textContent = '🎉 Victoire des Villageois !';
-        elements.winnerSubtitle.textContent = 'Les loups-garous ont été éliminés !';
-    } else {
-        elements.winnerTitle.textContent = '🐺 Victoire des Loups-Garous !';
-        elements.winnerSubtitle.textContent = 'Les loups-garous ont pris le contrôle du village !';
-    }
+    // Afficher le message de victoire
+    elements.winnerTitle.textContent = `🎉 Victoire des ${data.winners.team} !`;
+    elements.winnerSubtitle.textContent = data.winners.message;
     
     // Afficher tous les joueurs avec leurs rôles
     elements.finalPlayersList.innerHTML = '';
-    data.players.forEach(player => {
+    data.allPlayers.forEach(player => {
+        const isWinner = data.winners.players.some(winner => winner.id === player.id);
+        
         const card = document.createElement('div');
-        card.className = `final-player-card ${data.winner === 'villagers' && player.role !== 'loup-garou' ? 'winner' : ''}
-                         ${data.winner === 'werewolves' && player.role === 'loup-garou' ? 'winner' : ''}`;
+        card.className = `final-player-card ${isWinner ? 'winner' : ''}`;
         
         card.innerHTML = `
             <div class="player-avatar">${player.name.charAt(0).toUpperCase()}</div>

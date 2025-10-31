@@ -39,7 +39,10 @@ const ROLES = {
 // Phases de jeu
 const PHASES = {
     LOBBY: 'lobby',
+    CUPIDON: 'cupidon',
+    VOYANTE: 'voyante', 
     NIGHT: 'night',
+    SORCIERE: 'sorciere',
     DAY: 'day',
     VOTE: 'vote',
     ENDED: 'ended'
@@ -61,6 +64,11 @@ class Game {
         this.lovers = []; // Pour Cupidon
         this.werewolfTarget = null; // Cible sélectionnée par les loups-garous
         this.werewolfVotes = new Map(); // Votes des loups-garous : playerId -> targetId
+        this.witchPotions = { // Potions de la sorcière
+            heal: true, // Potion de vie disponible
+            poison: true // Potion de poison disponible
+        };
+        this.currentNightTarget = null; // Cible des loups-garous pour la sorcière
         this.roleConfig = { // Configuration des rôles par l'hôte
             loupGarou: 1,
             voyante: true,
@@ -187,9 +195,8 @@ class Game {
         
         this.assignRoles();
         this.isStarted = true;
-        this.phase = PHASES.NIGHT;
         this.round = 1;
-        this.startTimer(60); // 60 secondes pour la nuit
+        this.startNightSequence(); // Commencer la séquence de nuit
         
         return true;
     }
@@ -221,12 +228,30 @@ class Game {
         this.clearTimer();
         
         switch (this.phase) {
+            case PHASES.CUPIDON:
+                // Cupidon a fini, passer à la voyante ou aux loups
+                this.nextNightPhase();
+                break;
+                
+            case PHASES.VOYANTE:
+                // Voyante a fini, passer aux loups-garous
+                this.phase = PHASES.NIGHT;
+                this.startTimer(30); // 30 secondes pour les loups-garous
+                break;
+                
             case PHASES.NIGHT:
-                // Traiter les actions nocturnes
+                // Loups-garous ont fini, calculer leur cible et passer à la sorcière
+                this.processWerewolfVotes();
+                this.nextNightPhase();
+                break;
+                
+            case PHASES.SORCIERE:
+                // Sorcière a fini, traiter toutes les actions et passer au jour
                 this.processNightActions();
                 this.phase = PHASES.DAY;
                 this.startTimer(120); // 2 minutes pour le jour
                 break;
+                
             case PHASES.DAY:
                 this.phase = PHASES.VOTE;
                 this.startTimer(60); // 1 minute pour voter
@@ -234,16 +259,11 @@ class Game {
             case PHASES.VOTE:
                 this.processVotes();
                 if (this.checkWinCondition()) {
-                    this.phase = PHASES.ENDED;
-                    io.to(this.id).emit('gameEnded', {
-                        winner: this.getWinner(),
-                        players: Array.from(this.players.values())
-                    });
+                    this.endGame();
                     return;
                 } else {
-                    this.phase = PHASES.NIGHT;
                     this.round++;
-                    this.startTimer(60);
+                    this.startNightSequence();
                 }
                 break;
         }
@@ -255,6 +275,100 @@ class Game {
         
         // Envoyer la mise à jour de phase à tous les joueurs
         io.to(this.id).emit('phaseChanged', this.getPublicInfo());
+    }
+
+    startNightSequence() {
+        // Commencer par Cupidon (premier tour seulement) ou la voyante
+        if (this.round === 1 && this.hasRole(ROLES.CUPIDON)) {
+            this.phase = PHASES.CUPIDON;
+            this.startTimer(20); // 20 secondes pour Cupidon
+        } else {
+            this.nextNightPhase();
+        }
+    }
+
+    nextNightPhase() {
+        // Déterminer la prochaine phase selon les rôles présents
+        if (this.phase === PHASES.CUPIDON || this.phase === PHASES.LOBBY) {
+            if (this.hasRole(ROLES.VOYANTE)) {
+                this.phase = PHASES.VOYANTE;
+                this.startTimer(20); // 20 secondes pour la voyante
+            } else {
+                this.phase = PHASES.NIGHT;
+                this.startTimer(30); // 30 secondes pour les loups-garous
+            }
+        } else if (this.phase === PHASES.VOYANTE) {
+            this.phase = PHASES.NIGHT;
+            this.startTimer(30); // 30 secondes pour les loups-garous
+        } else if (this.phase === PHASES.NIGHT) {
+            if (this.hasRole(ROLES.SORCIERE)) {
+                this.phase = PHASES.SORCIERE;
+                this.startTimer(20); // 20 secondes pour la sorcière
+                
+                // Informer la sorcière de la cible des loups-garous
+                const witch = this.getPlayersByRole(ROLES.SORCIERE)[0];
+                if (witch && witch.isAlive) {
+                    const targetName = this.currentNightTarget ? 
+                        this.players.get(this.currentNightTarget)?.name : 'Personne';
+                    io.to(witch.id).emit('witchInfo', {
+                        target: this.currentNightTarget,
+                        targetName: targetName,
+                        healAvailable: this.witchPotions.heal,
+                        poisonAvailable: this.witchPotions.poison
+                    });
+                }
+            } else {
+                this.processNightActions();
+                this.phase = PHASES.DAY;
+                this.startTimer(120);
+            }
+        } else if (this.phase === PHASES.SORCIERE) {
+            this.processNightActions();
+            this.phase = PHASES.DAY;
+            this.startTimer(120);
+        }
+    }
+
+    hasRole(role) {
+        return Array.from(this.players.values()).some(p => p.role === role && p.isAlive);
+    }
+
+    getPlayersByRole(role) {
+        return Array.from(this.players.values()).filter(p => p.role === role);
+    }
+
+    processWerewolfVotes() {
+        // Calculer le vote majoritaire des loups-garous
+        this.currentNightTarget = null;
+        if (this.werewolfVotes.size > 0) {
+            const voteCount = new Map();
+            
+            // Compter les votes
+            this.werewolfVotes.forEach((targetId, voterId) => {
+                if (!voteCount.has(targetId)) {
+                    voteCount.set(targetId, 0);
+                }
+                voteCount.set(targetId, voteCount.get(targetId) + 1);
+            });
+            
+            // Trouver la majorité
+            let maxVotes = 0;
+            let winners = [];
+            
+            voteCount.forEach((votes, targetId) => {
+                if (votes > maxVotes) {
+                    maxVotes = votes;
+                    winners = [targetId];
+                } else if (votes === maxVotes) {
+                    winners.push(targetId);
+                }
+            });
+            
+            // Si égalité, personne ne meurt par les loups-garous
+            if (winners.length === 1) {
+                this.currentNightTarget = winners[0];
+            }
+        }
     }
 
     processVotes() {
@@ -278,10 +392,12 @@ class Game {
 
         // Éliminer le joueur
         if (eliminated && maxVotes > 0) {
-            this.players.get(eliminated).isAlive = false;
+            const eliminatedPlayer = this.players.get(eliminated);
+            eliminatedPlayer.isAlive = false;
             io.to(this.id).emit('playerEliminated', {
                 playerId: eliminated,
-                playerName: this.players.get(eliminated).name,
+                playerName: eliminatedPlayer.name,
+                playerRole: eliminatedPlayer.role,
                 reason: 'vote',
                 votes: maxVotes
             });
@@ -391,6 +507,7 @@ class Game {
                     killedPlayers.push({
                         playerId: action.targetId,
                         playerName: target.name,
+                        playerRole: target.role,
                         killedBy: 'sorciere'
                     });
                 }
@@ -405,6 +522,7 @@ class Game {
                 killedPlayers.push({
                     playerId: werewolfKill,
                     playerName: target.name,
+                    playerRole: target.role,
                     killedBy: 'loup-garou'
                 });
 
@@ -422,6 +540,7 @@ class Game {
                         killedPlayers.push({
                             playerId: otherLover,
                             playerName: otherLoverPlayer.name,
+                            playerRole: otherLoverPlayer.role,
                             killedBy: 'amour'
                         });
                     }
@@ -438,18 +557,6 @@ class Game {
         // Reset de la sélection et des votes des loups-garous
         this.werewolfTarget = null;
         this.werewolfVotes.clear();
-    }
-
-    getWinner() {
-        const alivePlayers = Array.from(this.players.values()).filter(p => p.isAlive);
-        const aliveWerewolves = alivePlayers.filter(p => p.role === ROLES.LOUP_GAROU);
-        
-        if (aliveWerewolves.length === 0) {
-            return 'villagers';
-        } else if (aliveWerewolves.length >= alivePlayers.filter(p => p.role !== ROLES.LOUP_GAROU).length) {
-            return 'werewolves';
-        }
-        return null;
     }
 
     checkAllActionsConfirmed() {
@@ -495,10 +602,70 @@ class Game {
         }
     }
 
+    getWinners() {
+        const alivePlayers = Array.from(this.players.values()).filter(p => p.isAlive);
+        const aliveWerewolves = alivePlayers.filter(p => p.role === ROLES.LOUP_GAROU);
+
+        // Vérifier la victoire des amoureux
+        if (this.lovers.length === 2) {
+            const lover1 = this.players.get(this.lovers[0]);
+            const lover2 = this.players.get(this.lovers[1]);
+            
+            if (lover1 && lover2 && lover1.isAlive && lover2.isAlive) {
+                const isWerewolfVillagerCouple = 
+                    (lover1.role === ROLES.LOUP_GAROU && lover2.role !== ROLES.LOUP_GAROU) ||
+                    (lover2.role === ROLES.LOUP_GAROU && lover1.role !== ROLES.LOUP_GAROU);
+                
+                if (isWerewolfVillagerCouple && alivePlayers.length === 2) {
+                    return {
+                        team: 'Amoureux',
+                        players: [lover1, lover2],
+                        message: 'Les amoureux survivent ensemble et gagnent la partie !'
+                    };
+                }
+            }
+        }
+
+        // Victoire des villageois
+        if (aliveWerewolves.length === 0) {
+            const villagers = Array.from(this.players.values()).filter(p => p.role !== ROLES.LOUP_GAROU);
+            return {
+                team: 'Villageois',
+                players: villagers,
+                message: 'Tous les loups-garous ont été éliminés ! Les villageois gagnent !'
+            };
+        }
+        
+        // Victoire des loups-garous
+        const werewolves = Array.from(this.players.values()).filter(p => p.role === ROLES.LOUP_GAROU);
+        return {
+            team: 'Loups-Garous',
+            players: werewolves,
+            message: 'Les loups-garous dominent le village ! Ils gagnent !'
+        };
+    }
+
     checkWinCondition() {
         const alivePlayers = Array.from(this.players.values()).filter(p => p.isAlive);
         const aliveWerewolves = alivePlayers.filter(p => p.role === ROLES.LOUP_GAROU);
         const aliveVillagers = alivePlayers.filter(p => p.role !== ROLES.LOUP_GAROU);
+
+        // Vérifier si les amoureux loup/villageois gagnent
+        if (this.lovers.length === 2) {
+            const lover1 = this.players.get(this.lovers[0]);
+            const lover2 = this.players.get(this.lovers[1]);
+            
+            if (lover1 && lover2 && lover1.isAlive && lover2.isAlive) {
+                // Si un loup et un villageois sont amoureux et survivent
+                const isWerewolfVillagerCouple = 
+                    (lover1.role === ROLES.LOUP_GAROU && lover2.role !== ROLES.LOUP_GAROU) ||
+                    (lover2.role === ROLES.LOUP_GAROU && lover1.role !== ROLES.LOUP_GAROU);
+                
+                if (isWerewolfVillagerCouple && alivePlayers.length === 2) {
+                    return true; // Victoire des amoureux
+                }
+            }
+        }
 
         // Les villageois gagnent si tous les loups-garous sont morts
         if (aliveWerewolves.length === 0) {
@@ -533,6 +700,23 @@ class Game {
             gameName: this.gameName,
             createdAt: this.createdAt
         };
+    }
+
+    endGame() {
+        this.phase = PHASES.ENDED;
+        this.timer = 0;
+        
+        const winners = this.getWinners();
+        
+        this.io.to(this.id).emit('gameEnded', {
+            winners: winners,
+            allPlayers: Array.from(this.players.values()).map(p => ({
+                id: p.id,
+                name: p.name,
+                role: p.role,
+                isAlive: p.isAlive
+            }))
+        });
     }
 }
 
@@ -703,6 +887,21 @@ io.on('connection', (socket) => {
 
         const game = games.get(playerData.gameId);
         if (game && game.phase === PHASES.VOTE) {
+            const voter = game.players.get(socket.id);
+            
+            // Vérifier que le votant est vivant
+            if (!voter || !voter.isAlive) {
+                socket.emit('error', 'Les joueurs morts ne peuvent pas voter');
+                return;
+            }
+            
+            // Vérifier que la cible est vivante
+            const target = game.players.get(targetId);
+            if (!target || !target.isAlive) {
+                socket.emit('error', 'Vous ne pouvez pas voter pour un joueur mort');
+                return;
+            }
+            
             game.votes.set(socket.id, targetId);
             game.confirmedActions.add(socket.id); // Marquer comme confirmé
             
@@ -729,6 +928,12 @@ io.on('connection', (socket) => {
         const game = games.get(playerData.gameId);
         if (game && game.phase === PHASES.NIGHT) {
             const player = game.players.get(socket.id);
+            
+            // Vérifier que le joueur est vivant
+            if (!player || !player.isAlive) {
+                socket.emit('error', 'Les joueurs morts ne peuvent pas agir la nuit');
+                return;
+            }
             
             // Gestion spéciale pour les loups-garous (vote et synchronisation)
             if (player.role === ROLES.LOUP_GAROU && action === 'select') {
