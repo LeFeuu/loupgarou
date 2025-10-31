@@ -136,8 +136,15 @@ socket.on('gameStarted', (data) => {
 socket.on('phaseChanged', (data) => {
     gameState.phase = data.phase;
     gameState.timeRemaining = data.timeRemaining;
+    gameState.players = data.players;
     updateGameDisplay(data);
     updateActionPanel();
+    showNotification(`Nouvelle phase: ${getPhaseDisplayName(data.phase)}`, 'info');
+});
+
+socket.on('timerUpdate', (data) => {
+    gameState.timeRemaining = data.timeRemaining;
+    updateTimer(data.timeRemaining);
 });
 
 socket.on('voteUpdate', (data) => {
@@ -496,8 +503,12 @@ function updateActionPanel() {
             content = '<p>En attente de la prochaine phase...</p>';
     }
     
-    elements.actionTitle.textContent = title;
-    elements.actionContent.innerHTML = content;
+    if (elements.actionTitle) {
+        elements.actionTitle.textContent = title;
+    }
+    if (elements.actionContent) {
+        elements.actionContent.innerHTML = content;
+    }
 }
 
 function getPlayerName(playerId) {

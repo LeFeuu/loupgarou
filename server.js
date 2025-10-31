@@ -135,6 +135,12 @@ class Game {
         this.timeRemaining = seconds;
         this.timer = setInterval(() => {
             this.timeRemaining--;
+            // Envoyer la mise à jour du timer à tous les joueurs
+            io.to(this.id).emit('timerUpdate', {
+                timeRemaining: this.timeRemaining,
+                phase: this.phase
+            });
+            
             if (this.timeRemaining <= 0) {
                 this.nextPhase();
             }
@@ -173,6 +179,9 @@ class Game {
                 }
                 break;
         }
+        
+        // Envoyer la mise à jour de phase à tous les joueurs
+        io.to(this.id).emit('phaseChanged', this.getPublicInfo());
     }
 
     processVotes() {
