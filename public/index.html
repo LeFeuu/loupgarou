@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loup-Garou Online - Jeu Moderne</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Écran d'accueil -->
+        <div id="homeScreen" class="screen active">
+            <div class="hero-section">
+                <div class="moon-background"></div>
+                <div class="hero-content">
+                    <h1 class="game-title">
+                        <i class="fas fa-moon"></i>
+                        Loup-Garou Online
+                    </h1>
+                    <p class="game-subtitle">Découvrez qui se cache derrière le masque dans ce jeu de déduction moderne</p>
+                    
+                    <div class="action-buttons">
+                        <button id="createGameBtn" class="btn btn-primary">
+                            <i class="fas fa-plus"></i>
+                            Créer une partie
+                        </button>
+                        <button id="joinGameBtn" class="btn btn-secondary">
+                            <i class="fas fa-users"></i>
+                            Rejoindre une partie
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal pour créer/rejoindre une partie -->
+            <div id="joinModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 id="modalTitle">Rejoindre une partie</h2>
+                        <button class="close-btn" id="closeModal">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label for="playerName">Votre nom</label>
+                            <input type="text" id="playerName" placeholder="Entrez votre nom" maxlength="20">
+                        </div>
+                        <div class="form-group" id="gameIdGroup">
+                            <label for="gameId">Code de la partie</label>
+                            <input type="text" id="gameId" placeholder="Code à 6 caractères" maxlength="6">
+                        </div>
+                        <button id="confirmJoin" class="btn btn-primary full-width">
+                            <i class="fas fa-arrow-right"></i>
+                            Commencer
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Écran de lobby -->
+        <div id="lobbyScreen" class="screen">
+            <div class="lobby-container">
+                <div class="lobby-header">
+                    <div class="game-info">
+                        <h2>Salon de jeu</h2>
+                        <div class="game-code">
+                            <span>Code: </span>
+                            <span id="currentGameId" class="code-display"></span>
+                            <button id="copyCodeBtn" class="copy-btn" title="Copier le code">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <button id="leaveLobbyBtn" class="btn btn-danger">
+                        <i class="fas fa-sign-out-alt"></i>
+                        Quitter
+                    </button>
+                </div>
+
+                <div class="lobby-content">
+                    <div class="players-section">
+                        <h3>Joueurs <span id="playerCount">(0/12)</span></h3>
+                        <div id="playersList" class="players-grid"></div>
+                    </div>
+
+                    <div class="game-controls">
+                        <div id="hostControls" class="host-section" style="display: none;">
+                            <h3>Contrôles d'hôte</h3>
+                            <button id="startGameBtn" class="btn btn-success full-width" disabled>
+                                <i class="fas fa-play"></i>
+                                Démarrer la partie (min. 4 joueurs)
+                            </button>
+                        </div>
+                        
+                        <div class="rules-section">
+                            <h3>Règles du jeu</h3>
+                            <div class="rules-content">
+                                <div class="rule-item">
+                                    <i class="fas fa-moon"></i>
+                                    <span><strong>Nuit:</strong> Les loups-garous choisissent leur victime</span>
+                                </div>
+                                <div class="rule-item">
+                                    <i class="fas fa-sun"></i>
+                                    <span><strong>Jour:</strong> Discussion entre tous les joueurs</span>
+                                </div>
+                                <div class="rule-item">
+                                    <i class="fas fa-vote-yea"></i>
+                                    <span><strong>Vote:</strong> Élimination d'un joueur suspect</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Écran de jeu -->
+        <div id="gameScreen" class="screen">
+            <div class="game-container">
+                <!-- Interface de jeu principale -->
+                <div class="game-header">
+                    <div class="phase-indicator">
+                        <div class="phase-info">
+                            <span id="currentPhase" class="phase-name">Phase</span>
+                            <span id="roundNumber" class="round-number">Tour 1</span>
+                        </div>
+                        <div class="timer">
+                            <i class="fas fa-clock"></i>
+                            <span id="timeRemaining">--:--</span>
+                        </div>
+                    </div>
+                    
+                    <div class="role-indicator">
+                        <div id="playerRole" class="role-card">
+                            <i class="role-icon"></i>
+                            <span class="role-name">Votre rôle</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="game-main">
+                    <!-- Zone des joueurs -->
+                    <div class="players-area">
+                        <h3>Joueurs vivants</h3>
+                        <div id="gamePlayersList" class="game-players-grid"></div>
+                    </div>
+
+                    <!-- Zone d'action -->
+                    <div class="action-area">
+                        <div id="actionPanel" class="action-panel">
+                            <h3 id="actionTitle">Action</h3>
+                            <div id="actionContent" class="action-content">
+                                <!-- Le contenu change selon la phase et le rôle -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat -->
+                <div class="chat-container">
+                    <div class="chat-header">
+                        <h3><i class="fas fa-comments"></i> Chat</h3>
+                    </div>
+                    <div id="chatMessages" class="chat-messages"></div>
+                    <div class="chat-input">
+                        <input type="text" id="chatInput" placeholder="Tapez votre message..." maxlength="200">
+                        <button id="sendChatBtn" class="btn btn-primary">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Écran de fin de partie -->
+        <div id="endScreen" class="screen">
+            <div class="end-container">
+                <div class="end-content">
+                    <div id="winnerAnnouncement" class="winner-section">
+                        <h1 id="winnerTitle">Fin de partie</h1>
+                        <p id="winnerSubtitle">Les résultats</p>
+                    </div>
+                    
+                    <div class="final-players">
+                        <h3>Révélation des rôles</h3>
+                        <div id="finalPlayersList" class="final-players-grid"></div>
+                    </div>
+                    
+                    <div class="end-actions">
+                        <button id="newGameBtn" class="btn btn-primary">
+                            <i class="fas fa-redo"></i>
+                            Nouvelle partie
+                        </button>
+                        <button id="backToMenuBtn" class="btn btn-secondary">
+                            <i class="fas fa-home"></i>
+                            Menu principal
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notifications -->
+    <div id="notifications" class="notifications-container"></div>
+
+    <!-- Scripts -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
