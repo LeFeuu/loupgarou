@@ -147,6 +147,26 @@ socket.on('timerUpdate', (data) => {
     updateTimer(data.timeRemaining);
 });
 
+socket.on('nightKills', (killedPlayers) => {
+    if (killedPlayers.length > 0) {
+        killedPlayers.forEach(killed => {
+            showNotification(`${killed.playerName} a été éliminé(e) par les loups-garous !`, 'error');
+        });
+    } else {
+        showNotification('Personne n\'a été tué cette nuit', 'info');
+    }
+    // Mettre à jour la liste des joueurs
+    updateGamePlayersList(gameState.players);
+});
+
+socket.on('playerEliminated', (data) => {
+    showNotification(`${data.playerName} a été éliminé(e) par vote (${data.votes} votes)`, 'warning');
+});
+
+socket.on('roleRevealed', (data) => {
+    showNotification(`${data.playerName} est ${getRoleDisplayName(data.role)}`, 'info');
+});
+
 socket.on('voteUpdate', (data) => {
     showNotification(`Vote enregistré`, 'success');
 });
@@ -519,13 +539,27 @@ function getPlayerName(playerId) {
 function performNightAction() {
     if (!gameState.selectedTarget) return;
     
+    const actionType = gameState.playerRole === 'loup-garou' ? 'kill' : 'see';
+    const targetName = getPlayerName(gameState.selectedTarget);
+    
     socket.emit('nightAction', {
-        action: gameState.playerRole === 'loup-garou' ? 'kill' : 'see',
+        action: actionType,
         targetId: gameState.selectedTarget
     });
     
-    showNotification('Action envoyée !', 'success');
+    if (actionType === 'kill') {
+        showNotification(`Vous avez choisi d'éliminer ${targetName}`, 'success');
+    } else {
+        showNotification(`Vous regardez le rôle de ${targetName}...`, 'success');
+    }
+    
     gameState.selectedTarget = null;
+    
+    // Désélectionner visuellement
+    document.querySelectorAll('.game-player-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
     updateActionPanel();
 }
 

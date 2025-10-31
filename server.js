@@ -156,11 +156,11 @@ class Game {
 
     nextPhase() {
         this.clearTimer();
-        this.votes.clear();
-        this.nightActions.clear();
-
+        
         switch (this.phase) {
             case PHASES.NIGHT:
+                // Traiter les actions nocturnes
+                this.processNightActions();
                 this.phase = PHASES.DAY;
                 this.startTimer(120); // 2 minutes pour le jour
                 break;
@@ -172,6 +172,11 @@ class Game {
                 this.processVotes();
                 if (this.checkWinCondition()) {
                     this.phase = PHASES.ENDED;
+                    io.to(this.id).emit('gameEnded', {
+                        winner: this.getWinner(),
+                        players: Array.from(this.players.values())
+                    });
+                    return;
                 } else {
                     this.phase = PHASES.NIGHT;
                     this.round++;
@@ -179,6 +184,9 @@ class Game {
                 }
                 break;
         }
+        
+        this.votes.clear();
+        this.nightActions.clear();
         
         // Envoyer la mise à jour de phase à tous les joueurs
         io.to(this.id).emit('phaseChanged', this.getPublicInfo());
@@ -206,9 +214,69 @@ class Game {
         // Éliminer le joueur
         if (eliminated && maxVotes > 0) {
             this.players.get(eliminated).isAlive = false;
+            io.to(this.id).emit('playerEliminated', {
+                playerId: eliminated,
+                playerName: this.players.get(eliminated).name,
+                reason: 'vote',
+                votes: maxVotes
+            });
         }
 
         return eliminated;
+    }
+
+    processNightActions() {
+        const killedPlayers = [];
+        const seenRoles = [];
+
+        // Traiter les actions des loups-garous
+        this.nightActions.forEach((action, playerId) => {
+            const player = this.players.get(playerId);
+            if (!player || !player.isAlive) return;
+
+            if (player.role === ROLES.LOUP_GAROU && action.action === 'kill') {
+                const target = this.players.get(action.targetId);
+                if (target && target.isAlive) {
+                    target.isAlive = false;
+                    killedPlayers.push({
+                        playerId: action.targetId,
+                        playerName: target.name,
+                        killedBy: 'loup-garou'
+                    });
+                }
+            }
+
+            if (player.role === ROLES.VOYANTE && action.action === 'see') {
+                const target = this.players.get(action.targetId);
+                if (target && target.isAlive) {
+                    // Envoyer le rôle seulement au voyant
+                    io.to(playerId).emit('roleRevealed', {
+                        playerId: action.targetId,
+                        playerName: target.name,
+                        role: target.role
+                    });
+                }
+            }
+        });
+
+        // Annoncer les morts de la nuit
+        if (killedPlayers.length > 0) {
+            io.to(this.id).emit('nightKills', killedPlayers);
+        } else {
+            io.to(this.id).emit('nightKills', []);
+        }
+    }
+
+    getWinner() {
+        const alivePlayers = Array.from(this.players.values()).filter(p => p.isAlive);
+        const aliveWerewolves = alivePlayers.filter(p => p.role === ROLES.LOUP_GAROU);
+        
+        if (aliveWerewolves.length === 0) {
+            return 'villagers';
+        } else if (aliveWerewolves.length >= alivePlayers.filter(p => p.role !== ROLES.LOUP_GAROU).length) {
+            return 'werewolves';
+        }
+        return null;
     }
 
     checkWinCondition() {
@@ -216,7 +284,17 @@ class Game {
         const aliveWerewolves = alivePlayers.filter(p => p.role === ROLES.LOUP_GAROU);
         const aliveVillagers = alivePlayers.filter(p => p.role !== ROLES.LOUP_GAROU);
 
-        return aliveWerewolves.length === 0 || aliveWerewolves.length >= aliveVillagers.length;
+        // Les villageois gagnent si tous les loups-garous sont morts
+        if (aliveWerewolves.length === 0) {
+            return true;
+        }
+        
+        // Les loups-garous gagnent s'ils égalent ou dépassent le nombre de villageois
+        if (aliveWerewolves.length >= aliveVillagers.length) {
+            return true;
+        }
+        
+        return false;
     }
 
     getPublicInfo() {
