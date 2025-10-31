@@ -806,6 +806,23 @@ body {
     content: '💘';
 }
 
+.role-petite-fille .role-icon::before {
+    content: '👧';
+}
+
+/* Styles pour les sélections des loups-garous */
+.game-player-card.werewolf-selected {
+    border-color: #ef4444;
+    background: rgba(239, 68, 68, 0.2);
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+}
+
+/* Style pour les messages de loups-garous */
+.werewolf-message {
+    border-left: 4px solid #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+}
+
 /* Responsive */
 @media (max-width: 1024px) {
     .game-container {

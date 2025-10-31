@@ -182,6 +182,28 @@ socket.on('dayConfirmed', (data) => {
     console.log(`Joueurs prêts pour la phase suivante: ${data.confirmedCount}`);
 });
 
+socket.on('werewolfSelection', (data) => {
+    if (gameState.playerRole === 'loup-garou') {
+        showNotification(`${data.selectedByName} a sélectionné ${data.targetName}`, 'info');
+        // Mettre à jour la sélection visuelle
+        updateWerewolfSelection(data.targetId);
+    }
+});
+
+socket.on('werewolfChat', (data) => {
+    addWerewolfChatMessage(data);
+});
+
+socket.on('spyChat', (data) => {
+    if (gameState.playerRole === 'petite-fille') {
+        addSpyChatMessage(data);
+    }
+});
+
+socket.on('becameLover', (data) => {
+    showNotification(`💕 Vous êtes amoureux de ${data.partnerName} !`, 'warning');
+});
+
 socket.on('voteUpdate', (data) => {
     showNotification(`Vote enregistré`, 'success');
 });
@@ -341,7 +363,8 @@ function getRoleDisplayName(role) {
         'voyante': 'Voyante',
         'sorciere': 'Sorcière',
         'chasseur': 'Chasseur',
-        'cupidon': 'Cupidon'
+        'cupidon': 'Cupidon',
+        'petite-fille': 'Petite Fille'
     };
     return roleNames[role] || role;
 }
@@ -469,9 +492,10 @@ function updateActionPanel() {
             if (gameState.playerRole === 'loup-garou') {
                 title = 'Phase de Nuit - Loup-Garou';
                 content = `
+                    <p>🐺 <strong>Chat des Loups-Garous</strong> - Communiquez entre vous</p>
                     <p>Choisissez votre victime pour cette nuit.</p>
                     ${gameState.selectedTarget ? 
-                        `<button onclick="performNightAction()" class="btn btn-danger full-width">
+                        `<button onclick="performNightAction('kill')" class="btn btn-danger full-width">
                             <i class="fas fa-skull"></i> Éliminer ${getPlayerName(gameState.selectedTarget)}
                         </button>` : 
                         '<p style="color: var(--text-muted);">Sélectionnez un joueur</p>'
@@ -482,15 +506,46 @@ function updateActionPanel() {
                 content = `
                     <p>Vous pouvez voir le rôle d'un joueur.</p>
                     ${gameState.selectedTarget ? 
-                        `<button onclick="performNightAction()" class="btn btn-primary full-width">
+                        `<button onclick="performNightAction('see')" class="btn btn-primary full-width">
                             <i class="fas fa-eye"></i> Voir le rôle de ${getPlayerName(gameState.selectedTarget)}
                         </button>` : 
                         '<p style="color: var(--text-muted);">Sélectionnez un joueur</p>'
                     }
                 `;
+            } else if (gameState.playerRole === 'sorciere') {
+                title = 'Phase de Nuit - Sorcière';
+                content = `
+                    <p>Vous avez une potion de vie et une potion de mort.</p>
+                    <button onclick="performNightAction('heal')" class="btn btn-success full-width" style="margin-bottom: 0.5rem;">
+                        <i class="fas fa-heart"></i> Sauver la victime des loups
+                    </button>
+                    ${gameState.selectedTarget ? 
+                        `<button onclick="performNightAction('poison')" class="btn btn-danger full-width">
+                            <i class="fas fa-skull-crossbones"></i> Empoisonner ${getPlayerName(gameState.selectedTarget)}
+                        </button>` : 
+                        '<p style="color: var(--text-muted);">Sélectionnez un joueur à empoisonner</p>'
+                    }
+                `;
+            } else if (gameState.playerRole === 'cupidon' && gameState.round === 1) {
+                title = 'Phase de Nuit - Cupidon';
+                content = `
+                    <p>Choisissez deux joueurs qui tomberont amoureux.</p>
+                    <p style="color: var(--text-muted);">Cliquez sur deux joueurs pour les lier d'amour</p>
+                    <div id="selectedLovers"></div>
+                `;
+            } else if (gameState.playerRole === 'petite-fille') {
+                title = 'Phase de Nuit - Petite Fille';
+                content = `
+                    <p>👁️ Vous pouvez espionner les loups-garous !</p>
+                    <p>Vous pouvez voir leurs messages secrets...</p>
+                    <div style="background: var(--card-bg); padding: 1rem; border-radius: 12px; margin-top: 1rem;">
+                        <h4 style="color: var(--warning-color);">🔍 Chat Espionné</h4>
+                        <div id="spyMessages" style="max-height: 150px; overflow-y: auto;"></div>
+                    </div>
+                `;
             } else {
                 title = 'Phase de Nuit';
-                content = '<p>La nuit est tombée sur le village. Les loups-garous se réveillent...</p>';
+                content = '<p>La nuit est tombée sur le village. Dormez bien...</p>';
             }
             break;
             
@@ -557,21 +612,46 @@ function getPlayerName(playerId) {
     return player ? player.name : 'Joueur inconnu';
 }
 
-function performNightAction() {
-    if (!gameState.selectedTarget) return;
+function performNightAction(actionType) {
+    if (!gameState.selectedTarget && actionType !== 'heal') return;
     
-    const actionType = gameState.playerRole === 'loup-garou' ? 'kill' : 'see';
-    const targetName = getPlayerName(gameState.selectedTarget);
+    const targetName = gameState.selectedTarget ? getPlayerName(gameState.selectedTarget) : 'la victime';
     
-    socket.emit('nightAction', {
-        action: actionType,
-        targetId: gameState.selectedTarget
-    });
-    
-    if (actionType === 'kill') {
-        showNotification(`Vous avez choisi d'éliminer ${targetName}`, 'success');
+    // Pour les loups-garous, d'abord signaler la sélection
+    if (gameState.playerRole === 'loup-garou' && actionType === 'kill') {
+        socket.emit('nightAction', {
+            action: 'select',
+            targetId: gameState.selectedTarget
+        });
+        
+        // Puis confirmer l'action
+        setTimeout(() => {
+            socket.emit('nightAction', {
+                action: 'kill',
+                targetId: gameState.selectedTarget
+            });
+        }, 100);
     } else {
-        showNotification(`Vous regardez le rôle de ${targetName}...`, 'success');
+        socket.emit('nightAction', {
+            action: actionType,
+            targetId: gameState.selectedTarget
+        });
+    }
+    
+    // Messages de confirmation
+    switch (actionType) {
+        case 'kill':
+            showNotification(`Vous avez choisi d'éliminer ${targetName}`, 'success');
+            break;
+        case 'see':
+            showNotification(`Vous regardez le rôle de ${targetName}...`, 'success');
+            break;
+        case 'heal':
+            showNotification('Vous utilisez votre potion de vie', 'success');
+            break;
+        case 'poison':
+            showNotification(`Vous empoisonnez ${targetName}`, 'success');
+            break;
     }
     
     gameState.selectedTarget = null;
@@ -582,6 +662,51 @@ function performNightAction() {
     });
     
     updateActionPanel();
+}
+
+function updateWerewolfSelection(targetId) {
+    // Mettre à jour la sélection visuelle pour tous les loups-garous
+    document.querySelectorAll('.game-player-card').forEach(card => {
+        card.classList.remove('werewolf-selected');
+    });
+    
+    const targetCard = document.querySelector(`[data-player-id="${targetId}"]`);
+    if (targetCard) {
+        targetCard.classList.add('werewolf-selected');
+    }
+}
+
+function addWerewolfChatMessage(data) {
+    const messageElement = document.createElement('div');
+    messageElement.className = 'chat-message werewolf-message';
+    
+    const timestamp = new Date(data.timestamp).toLocaleTimeString('fr-FR', {
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+    
+    messageElement.innerHTML = `
+        <div class="chat-message-header">
+            <span class="chat-player-name" style="color: #ef4444;">🐺 ${data.playerName}</span>
+            <span class="chat-timestamp">${timestamp}</span>
+        </div>
+        <div class="chat-message-content">${escapeHtml(data.message)}</div>
+    `;
+    
+    elements.chatMessages.appendChild(messageElement);
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function addSpyChatMessage(data) {
+    const spyDiv = document.getElementById('spyMessages');
+    if (!spyDiv) return;
+    
+    const messageElement = document.createElement('div');
+    messageElement.style.cssText = 'margin-bottom: 0.5rem; padding: 0.5rem; background: rgba(239, 68, 68, 0.1); border-radius: 8px; font-size: 0.8rem;';
+    messageElement.textContent = data.message;
+    
+    spyDiv.appendChild(messageElement);
+    spyDiv.scrollTop = spyDiv.scrollHeight;
 }
 
 function vote() {

@@ -32,7 +32,8 @@ const ROLES = {
     VOYANTE: 'voyante',
     SORCIERE: 'sorciere',
     CHASSEUR: 'chasseur',
-    CUPIDON: 'cupidon'
+    CUPIDON: 'cupidon',
+    PETITE_FILLE: 'petite-fille'
 };
 
 // Phases de jeu
@@ -56,7 +57,9 @@ class Game {
         this.nightActions = new Map();
         this.timeRemaining = 0;
         this.timer = null;
-        this.confirmedActions = new Set(); // Nouveaux: joueurs ayant confirmé leur action
+        this.confirmedActions = new Set();
+        this.lovers = []; // Pour Cupidon
+        this.werewolfTarget = null; // Cible sélectionnée par les loups-garous
     }
 
     addPlayer(playerId, playerName) {
@@ -89,20 +92,38 @@ class Game {
         // Distribution des rôles selon le nombre de joueurs
         let roles = [];
         
-        if (playerCount >= 4) {
-            roles.push(ROLES.LOUP_GAROU, ROLES.VOYANTE);
-            for (let i = 2; i < playerCount; i++) {
-                roles.push(ROLES.VILLAGEOIS);
-            }
+        // Base minimale : 1 loup-garou + voyante
+        roles.push(ROLES.LOUP_GAROU, ROLES.VOYANTE);
+        
+        // Ajouter des villageois de base
+        for (let i = 2; i < playerCount; i++) {
+            roles.push(ROLES.VILLAGEOIS);
         }
         
-        if (playerCount >= 6) {
+        // Distribution progressive des rôles spéciaux
+        if (playerCount >= 5) {
             roles[roles.length - 1] = ROLES.SORCIERE;
             roles.push(ROLES.VILLAGEOIS);
         }
         
-        if (playerCount >= 8) {
+        if (playerCount >= 6) {
             roles[roles.length - 1] = ROLES.CHASSEUR;
+            roles.push(ROLES.VILLAGEOIS);
+        }
+        
+        if (playerCount >= 7) {
+            roles[roles.length - 1] = ROLES.CUPIDON;
+            roles.push(ROLES.VILLAGEOIS);
+        }
+        
+        if (playerCount >= 8) {
+            roles[roles.length - 1] = ROLES.PETITE_FILLE;
+            roles.push(ROLES.VILLAGEOIS);
+        }
+        
+        if (playerCount >= 9) {
+            // Ajouter un 2ème loup-garou
+            roles[roles.length - 1] = ROLES.LOUP_GAROU;
             roles.push(ROLES.VILLAGEOIS);
         }
 
@@ -230,22 +251,16 @@ class Game {
     processNightActions() {
         const killedPlayers = [];
         const seenRoles = [];
+        let hunterRevenge = null;
 
         // Traiter les actions des loups-garous
+        let werewolfKill = null;
         this.nightActions.forEach((action, playerId) => {
             const player = this.players.get(playerId);
             if (!player || !player.isAlive) return;
 
             if (player.role === ROLES.LOUP_GAROU && action.action === 'kill') {
-                const target = this.players.get(action.targetId);
-                if (target && target.isAlive) {
-                    target.isAlive = false;
-                    killedPlayers.push({
-                        playerId: action.targetId,
-                        playerName: target.name,
-                        killedBy: 'loup-garou'
-                    });
-                }
+                werewolfKill = action.targetId;
             }
 
             if (player.role === ROLES.VOYANTE && action.action === 'see') {
@@ -259,14 +274,80 @@ class Game {
                     });
                 }
             }
+
+            if (player.role === ROLES.CUPIDON && action.action === 'link' && this.round === 1) {
+                // Cupidon ne peut agir qu'au premier tour
+                if (action.targets && action.targets.length === 2) {
+                    this.lovers = action.targets;
+                    // Informer les amoureux
+                    action.targets.forEach(loverId => {
+                        const otherLover = action.targets.find(id => id !== loverId);
+                        const otherLoverName = this.players.get(otherLover)?.name;
+                        io.to(loverId).emit('becameLover', {
+                            partnerName: otherLoverName
+                        });
+                    });
+                }
+            }
+
+            if (player.role === ROLES.SORCIERE && action.action === 'heal' && werewolfKill) {
+                // Annuler la mort du loup-garou
+                werewolfKill = null;
+            }
+
+            if (player.role === ROLES.SORCIERE && action.action === 'poison') {
+                const target = this.players.get(action.targetId);
+                if (target && target.isAlive) {
+                    target.isAlive = false;
+                    killedPlayers.push({
+                        playerId: action.targetId,
+                        playerName: target.name,
+                        killedBy: 'sorciere'
+                    });
+                }
+            }
         });
 
-        // Annoncer les morts de la nuit
-        if (killedPlayers.length > 0) {
-            io.to(this.id).emit('nightKills', killedPlayers);
-        } else {
-            io.to(this.id).emit('nightKills', []);
+        // Appliquer la mort par loup-garou si pas soignée
+        if (werewolfKill) {
+            const target = this.players.get(werewolfKill);
+            if (target && target.isAlive) {
+                target.isAlive = false;
+                killedPlayers.push({
+                    playerId: werewolfKill,
+                    playerName: target.name,
+                    killedBy: 'loup-garou'
+                });
+
+                // Vérifier si c'est le chasseur
+                if (target.role === ROLES.CHASSEUR) {
+                    hunterRevenge = werewolfKill;
+                }
+
+                // Vérifier si c'est un amoureux
+                if (this.lovers.includes(werewolfKill)) {
+                    const otherLover = this.lovers.find(id => id !== werewolfKill);
+                    const otherLoverPlayer = this.players.get(otherLover);
+                    if (otherLoverPlayer && otherLoverPlayer.isAlive) {
+                        otherLoverPlayer.isAlive = false;
+                        killedPlayers.push({
+                            playerId: otherLover,
+                            playerName: otherLoverPlayer.name,
+                            killedBy: 'amour'
+                        });
+                    }
+                }
+            }
         }
+
+        // Annoncer les morts de la nuit
+        io.to(this.id).emit('nightKills', {
+            killedPlayers,
+            hunterRevenge
+        });
+
+        // Reset de la sélection des loups-garous
+        this.werewolfTarget = null;
     }
 
     getWinner() {
@@ -289,7 +370,10 @@ class Game {
             case PHASES.NIGHT:
                 // Compter les rôles actifs la nuit
                 alivePlayers.forEach(player => {
-                    if (player.role === ROLES.LOUP_GAROU || player.role === ROLES.VOYANTE) {
+                    if (player.role === ROLES.LOUP_GAROU || 
+                        player.role === ROLES.VOYANTE ||
+                        player.role === ROLES.SORCIERE ||
+                        (player.role === ROLES.CUPIDON && this.round === 1)) {
                         expectedActions++;
                     }
                 });
@@ -434,14 +518,41 @@ io.on('connection', (socket) => {
 
     // Action de nuit
     socket.on('nightAction', (data) => {
-        const { action, targetId } = data;
+        const { action, targetId, targets } = data;
         const playerData = players.get(socket.id);
         if (!playerData) return;
 
         const game = games.get(playerData.gameId);
         if (game && game.phase === PHASES.NIGHT) {
-            game.nightActions.set(socket.id, { action, targetId });
-            game.confirmedActions.add(socket.id); // Marquer comme confirmé
+            const player = game.players.get(socket.id);
+            
+            // Gestion spéciale pour les loups-garous (synchronisation)
+            if (player.role === ROLES.LOUP_GAROU && action === 'select') {
+                game.werewolfTarget = targetId;
+                // Informer tous les loups-garous de la sélection
+                game.players.forEach((p, pId) => {
+                    if (p.role === ROLES.LOUP_GAROU && p.isAlive) {
+                        io.to(pId).emit('werewolfSelection', {
+                            selectedBy: socket.id,
+                            selectedByName: player.name,
+                            targetId: targetId,
+                            targetName: game.players.get(targetId)?.name
+                        });
+                    }
+                });
+            }
+            
+            // Confirmer l'action finale
+            if (player.role === ROLES.LOUP_GAROU && action === 'kill') {
+                game.nightActions.set(socket.id, { action, targetId });
+                game.confirmedActions.add(socket.id);
+            } else if (player.role === ROLES.CUPIDON && action === 'link') {
+                game.nightActions.set(socket.id, { action, targets });
+                game.confirmedActions.add(socket.id);
+            } else {
+                game.nightActions.set(socket.id, { action, targetId });
+                game.confirmedActions.add(socket.id);
+            }
             
             io.to(game.id).emit('actionConfirmed', {
                 playerId: socket.id,
@@ -486,12 +597,38 @@ io.on('connection', (socket) => {
         if (game) {
             const player = game.players.get(socket.id);
             if (player && player.isAlive) {
-                io.to(game.id).emit('chatMessage', {
-                    playerId: socket.id,
-                    playerName: player.name,
-                    message: message,
-                    timestamp: Date.now()
-                });
+                // Chat nocturne spécial pour les loups-garous
+                if (game.phase === PHASES.NIGHT && player.role === ROLES.LOUP_GAROU) {
+                    // Envoyer seulement aux autres loups-garous vivants
+                    game.players.forEach((p, pId) => {
+                        if (p.role === ROLES.LOUP_GAROU && p.isAlive) {
+                            io.to(pId).emit('werewolfChat', {
+                                playerId: socket.id,
+                                playerName: player.name,
+                                message: message,
+                                timestamp: Date.now()
+                            });
+                        }
+                    });
+                    
+                    // La petite fille peut aussi voir si elle "espionne"
+                    game.players.forEach((p, pId) => {
+                        if (p.role === ROLES.PETITE_FILLE && p.isAlive) {
+                            io.to(pId).emit('spyChat', {
+                                message: `🐺 ${player.name}: ${message}`,
+                                timestamp: Date.now()
+                            });
+                        }
+                    });
+                } else if (game.phase !== PHASES.NIGHT) {
+                    // Chat normal pendant le jour
+                    io.to(game.id).emit('chatMessage', {
+                        playerId: socket.id,
+                        playerName: player.name,
+                        message: message,
+                        timestamp: Date.now()
+                    });
+                }
             }
         }
     });
