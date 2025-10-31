@@ -262,6 +262,21 @@ socket.on('werewolfChat', (data) => {
     addWerewolfChatMessage(data);
 });
 
+socket.on('werewolfVoteUpdate', (data) => {
+    if (gameState.playerRole === 'loup-garou') {
+        showNotification(
+            `${data.voterName} vote pour éliminer ${data.targetName} (${data.votesCount}/${data.totalWerewolves} votes)`, 
+            'info'
+        );
+    }
+});
+
+socket.on('werewolfVoteResult', (data) => {
+    if (gameState.playerRole === 'loup-garou') {
+        showNotification(data.message, data.targetId ? 'success' : 'warning');
+    }
+});
+
 socket.on('spyChat', (data) => {
     if (gameState.playerRole === 'petite-fille') {
         addSpyChatMessage(data);
@@ -786,20 +801,19 @@ function performNightAction(actionType) {
     
     const targetName = gameState.selectedTarget ? getPlayerName(gameState.selectedTarget) : 'la victime';
     
-    // Pour les loups-garous, d'abord signaler la sélection
+    // Pour les loups-garous, d'abord signaler la sélection puis confirmer
     if (gameState.playerRole === 'loup-garou' && actionType === 'kill') {
+        // Signaler la sélection pour synchroniser avec les autres loups
         socket.emit('nightAction', {
             action: 'select',
             targetId: gameState.selectedTarget
         });
         
-        // Puis confirmer l'action
-        setTimeout(() => {
-            socket.emit('nightAction', {
-                action: 'kill',
-                targetId: gameState.selectedTarget
-            });
-        }, 100);
+        // Confirmer immédiatement l'action de tuer
+        socket.emit('nightAction', {
+            action: 'kill',
+            targetId: gameState.selectedTarget
+        });
     } else {
         socket.emit('nightAction', {
             action: actionType,

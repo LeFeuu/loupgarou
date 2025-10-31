@@ -60,6 +60,7 @@ class Game {
         this.confirmedActions = new Set();
         this.lovers = []; // Pour Cupidon
         this.werewolfTarget = null; // Cible sélectionnée par les loups-garous
+        this.werewolfVotes = new Map(); // Votes des loups-garous : playerId -> targetId
         this.roleConfig = { // Configuration des rôles par l'hôte
             loupGarou: 1,
             voyante: true,
@@ -250,6 +251,7 @@ class Game {
         this.votes.clear();
         this.nightActions.clear();
         this.confirmedActions.clear(); // Reset des actions confirmées
+        this.werewolfVotes.clear(); // Reset des votes des loups-garous
         
         // Envoyer la mise à jour de phase à tous les joueurs
         io.to(this.id).emit('phaseChanged', this.getPublicInfo());
@@ -293,15 +295,62 @@ class Game {
         const seenRoles = [];
         let hunterRevenge = null;
 
-        // Traiter les actions des loups-garous
+        // Calculer le vote majoritaire des loups-garous
         let werewolfKill = null;
+        if (this.werewolfVotes.size > 0) {
+            const voteCount = new Map();
+            
+            // Compter les votes
+            this.werewolfVotes.forEach((targetId, voterId) => {
+                if (!voteCount.has(targetId)) {
+                    voteCount.set(targetId, 0);
+                }
+                voteCount.set(targetId, voteCount.get(targetId) + 1);
+            });
+            
+            // Trouver la majorité
+            let maxVotes = 0;
+            let winners = [];
+            
+            voteCount.forEach((votes, targetId) => {
+                if (votes > maxVotes) {
+                    maxVotes = votes;
+                    winners = [targetId];
+                } else if (votes === maxVotes) {
+                    winners.push(targetId);
+                }
+            });
+            
+            // Si égalité, personne ne meurt par les loups-garous
+            if (winners.length === 1) {
+                werewolfKill = winners[0];
+            }
+            
+            // Informer les loups-garous du résultat
+            const aliveWerewolves = Array.from(this.players.values()).filter(p => 
+                p.role === ROLES.LOUP_GAROU && p.isAlive
+            );
+            
+            aliveWerewolves.forEach(werewolf => {
+                let message;
+                if (werewolfKill) {
+                    const targetName = this.players.get(werewolfKill)?.name;
+                    message = `Vote majoritaire : ${targetName} sera éliminé(e) (${maxVotes} votes)`;
+                } else {
+                    message = `Égalité dans les votes : personne ne sera tué cette nuit`;
+                }
+                
+                io.to(werewolf.id).emit('werewolfVoteResult', {
+                    targetId: werewolfKill,
+                    message: message,
+                    voteCount: Array.from(voteCount.entries())
+                });
+            });
+        }
+        
         this.nightActions.forEach((action, playerId) => {
             const player = this.players.get(playerId);
             if (!player || !player.isAlive) return;
-
-            if (player.role === ROLES.LOUP_GAROU && action.action === 'kill') {
-                werewolfKill = action.targetId;
-            }
 
             if (player.role === ROLES.VOYANTE && action.action === 'see') {
                 const target = this.players.get(action.targetId);
@@ -386,8 +435,9 @@ class Game {
             hunterRevenge
         });
 
-        // Reset de la sélection des loups-garous
+        // Reset de la sélection et des votes des loups-garous
         this.werewolfTarget = null;
+        this.werewolfVotes.clear();
     }
 
     getWinner() {
@@ -409,9 +459,11 @@ class Game {
         switch (this.phase) {
             case PHASES.NIGHT:
                 // Compter les rôles actifs la nuit
+                const aliveWerewolves = alivePlayers.filter(p => p.role === ROLES.LOUP_GAROU);
+                expectedActions += aliveWerewolves.length; // Chaque loup-garou doit voter
+                
                 alivePlayers.forEach(player => {
-                    if (player.role === ROLES.LOUP_GAROU || 
-                        player.role === ROLES.VOYANTE ||
+                    if (player.role === ROLES.VOYANTE ||
                         player.role === ROLES.SORCIERE ||
                         (player.role === ROLES.CUPIDON && this.round === 1)) {
                         expectedActions++;
@@ -678,10 +730,10 @@ io.on('connection', (socket) => {
         if (game && game.phase === PHASES.NIGHT) {
             const player = game.players.get(socket.id);
             
-            // Gestion spéciale pour les loups-garous (synchronisation)
+            // Gestion spéciale pour les loups-garous (vote et synchronisation)
             if (player.role === ROLES.LOUP_GAROU && action === 'select') {
                 game.werewolfTarget = targetId;
-                // Informer tous les loups-garous de la sélection
+                // Informer tous les loups-garous de la sélection temporaire
                 game.players.forEach((p, pId) => {
                     if (p.role === ROLES.LOUP_GAROU && p.isAlive) {
                         io.to(pId).emit('werewolfSelection', {
@@ -694,14 +746,35 @@ io.on('connection', (socket) => {
                 });
             }
             
-            // Confirmer l'action finale
+            // Vote final des loups-garous
             if (player.role === ROLES.LOUP_GAROU && action === 'kill') {
-                game.nightActions.set(socket.id, { action, targetId });
+                game.werewolfVotes.set(socket.id, targetId);
                 game.confirmedActions.add(socket.id);
-            } else if (player.role === ROLES.CUPIDON && action === 'link') {
+                
+                // Informer tous les loups-garous du vote
+                const aliveWerewolves = Array.from(game.players.values()).filter(p => 
+                    p.role === ROLES.LOUP_GAROU && p.isAlive
+                );
+                
+                game.players.forEach((p, pId) => {
+                    if (p.role === ROLES.LOUP_GAROU && p.isAlive) {
+                        io.to(pId).emit('werewolfVoteUpdate', {
+                            voterName: player.name,
+                            targetId: targetId,
+                            targetName: game.players.get(targetId)?.name,
+                            votesCount: game.werewolfVotes.size,
+                            totalWerewolves: aliveWerewolves.length
+                        });
+                    }
+                });
+            }
+            
+            // Confirmer d'autres actions
+            else if (player.role === ROLES.CUPIDON && action === 'link') {
                 game.nightActions.set(socket.id, { action, targets });
                 game.confirmedActions.add(socket.id);
-            } else {
+            } else if (player.role !== ROLES.LOUP_GAROU) {
+                // Tous les autres rôles sauf loups-garous
                 game.nightActions.set(socket.id, { action, targetId });
                 game.confirmedActions.add(socket.id);
             }
