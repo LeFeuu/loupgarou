@@ -167,6 +167,21 @@ socket.on('roleRevealed', (data) => {
     showNotification(`${data.playerName} est ${getRoleDisplayName(data.role)}`, 'info');
 });
 
+socket.on('timerAccelerated', (data) => {
+    gameState.timeRemaining = data.timeRemaining;
+    updateTimer(data.timeRemaining);
+    showNotification(data.message, 'success');
+});
+
+socket.on('actionConfirmed', (data) => {
+    // Optionnel: afficher le nombre d'actions confirmées
+    console.log(`Actions confirmées: ${data.confirmedCount}`);
+});
+
+socket.on('dayConfirmed', (data) => {
+    console.log(`Joueurs prêts pour la phase suivante: ${data.confirmedCount}`);
+});
+
 socket.on('voteUpdate', (data) => {
     showNotification(`Vote enregistré`, 'success');
 });
@@ -502,6 +517,12 @@ function updateActionPanel() {
                         </li>
                     </ul>
                 </div>
+                <button onclick="confirmDayReady()" class="btn btn-success full-width" style="margin-top: 1rem;">
+                    <i class="fas fa-check"></i> Je suis prêt(e) pour la phase suivante
+                </button>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">
+                    Le timer sera accéléré quand 70% des joueurs seront prêts
+                </p>
             `;
             break;
             
@@ -570,8 +591,28 @@ function vote() {
         targetId: gameState.selectedTarget
     });
     
+    showNotification('Vote confirmé !', 'success');
     gameState.selectedTarget = null;
+    
+    // Désélectionner visuellement
+    document.querySelectorAll('.game-player-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    
     updateActionPanel();
+}
+
+function confirmDayReady() {
+    socket.emit('confirmDay');
+    showNotification('Vous êtes prêt(e) pour la phase suivante !', 'success');
+    
+    // Désactiver le bouton pour éviter les spams
+    const button = document.querySelector('button[onclick="confirmDayReady()"]');
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-check"></i> Prêt(e) !';
+        button.style.opacity = '0.7';
+    }
 }
 
 function sendChatMessage() {

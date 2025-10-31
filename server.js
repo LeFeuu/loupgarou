@@ -56,6 +56,7 @@ class Game {
         this.nightActions = new Map();
         this.timeRemaining = 0;
         this.timer = null;
+        this.confirmedActions = new Set(); // Nouveaux: joueurs ayant confirmé leur action
     }
 
     addPlayer(playerId, playerName) {
@@ -187,6 +188,7 @@ class Game {
         
         this.votes.clear();
         this.nightActions.clear();
+        this.confirmedActions.clear(); // Reset des actions confirmées
         
         // Envoyer la mise à jour de phase à tous les joueurs
         io.to(this.id).emit('phaseChanged', this.getPublicInfo());
@@ -277,6 +279,44 @@ class Game {
             return 'werewolves';
         }
         return null;
+    }
+
+    checkAllActionsConfirmed() {
+        const alivePlayers = Array.from(this.players.values()).filter(p => p.isAlive);
+        let expectedActions = 0;
+        
+        switch (this.phase) {
+            case PHASES.NIGHT:
+                // Compter les rôles actifs la nuit
+                alivePlayers.forEach(player => {
+                    if (player.role === ROLES.LOUP_GAROU || player.role === ROLES.VOYANTE) {
+                        expectedActions++;
+                    }
+                });
+                break;
+                
+            case PHASES.VOTE:
+                // Tous les joueurs vivants doivent voter
+                expectedActions = alivePlayers.length;
+                break;
+                
+            case PHASES.DAY:
+                // Pas d'actions obligatoires le jour, mais on peut accélérer si assez de monde confirme
+                expectedActions = Math.ceil(alivePlayers.length * 0.7); // 70% des joueurs
+                break;
+        }
+        
+        return this.confirmedActions.size >= expectedActions;
+    }
+
+    accelerateTimer() {
+        if (this.timeRemaining > 10) {
+            this.timeRemaining = 10;
+            io.to(this.id).emit('timerAccelerated', {
+                timeRemaining: this.timeRemaining,
+                message: 'Timer accéléré - Toutes les actions confirmées !'
+            });
+        }
     }
 
     checkWinCondition() {
@@ -376,11 +416,19 @@ io.on('connection', (socket) => {
         const game = games.get(playerData.gameId);
         if (game && game.phase === PHASES.VOTE) {
             game.votes.set(socket.id, targetId);
+            game.confirmedActions.add(socket.id); // Marquer comme confirmé
+            
             io.to(game.id).emit('voteUpdate', {
                 voter: socket.id,
                 target: targetId,
-                voteCount: game.votes.size
+                voteCount: game.votes.size,
+                confirmedCount: game.confirmedActions.size
             });
+            
+            // Vérifier si toutes les actions sont confirmées
+            if (game.checkAllActionsConfirmed()) {
+                game.accelerateTimer();
+            }
         }
     });
 
@@ -393,6 +441,38 @@ io.on('connection', (socket) => {
         const game = games.get(playerData.gameId);
         if (game && game.phase === PHASES.NIGHT) {
             game.nightActions.set(socket.id, { action, targetId });
+            game.confirmedActions.add(socket.id); // Marquer comme confirmé
+            
+            io.to(game.id).emit('actionConfirmed', {
+                playerId: socket.id,
+                confirmedCount: game.confirmedActions.size
+            });
+            
+            // Vérifier si toutes les actions sont confirmées
+            if (game.checkAllActionsConfirmed()) {
+                game.accelerateTimer();
+            }
+        }
+    });
+
+    // Nouvelle action : Confirmer pendant le jour (optionnel)
+    socket.on('confirmDay', () => {
+        const playerData = players.get(socket.id);
+        if (!playerData) return;
+
+        const game = games.get(playerData.gameId);
+        if (game && game.phase === PHASES.DAY) {
+            game.confirmedActions.add(socket.id);
+            
+            io.to(game.id).emit('dayConfirmed', {
+                playerId: socket.id,
+                confirmedCount: game.confirmedActions.size
+            });
+            
+            // Vérifier si assez de joueurs ont confirmé
+            if (game.checkAllActionsConfirmed()) {
+                game.accelerateTimer();
+            }
         }
     });
 
